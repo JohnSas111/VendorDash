@@ -1,10 +1,10 @@
 import { Colors, Radius } from "@/constants/theme";
+import { confirmAsync } from "@/lib/confirmDialog";
 import { supabase } from "@/lib/supabase";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
 import {
   ActivityIndicator,
-  Alert,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -62,18 +62,15 @@ export default function SettingsScreen() {
   }, []);
 
   async function handleLogout() {
-    Alert.alert("Log out", "Are you sure you want to log out?", [
-      { text: "Cancel", style: "cancel" },
-      {
-        text: "Log out",
-        style: "destructive",
-        onPress: async () => {
-          setSigningOut(true);
-          await supabase.auth.signOut();
-          router.replace("/(auth)/login");
-        },
-      },
-    ]);
+    const confirmed = await confirmAsync(
+      "Log out",
+      "Are you sure you want to log out?",
+    );
+    if (!confirmed) return;
+
+    setSigningOut(true);
+    await supabase.auth.signOut();
+    router.replace("/(auth)/login");
   }
 
   if (loading || !info) {

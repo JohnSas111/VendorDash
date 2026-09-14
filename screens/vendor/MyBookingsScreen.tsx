@@ -36,7 +36,9 @@ function formatDateRange(friday: string, sunday: string) {
 }
 
 function canCancel(booking: BookingRow): boolean {
-  if (booking.status !== "pending") return false;
+  // Matches the bookings RLS policy: vendors may cancel while a booking is
+  // still pending or approved — i.e. any time before it's actually paid.
+  if (!["pending", "approved"].includes(booking.status)) return false;
   const deadline = booking.market_sessions?.booking_deadline;
   if (!deadline) return true;
   return new Date(deadline) > new Date();

@@ -23,7 +23,13 @@ type Stall = {
 const DAYS = ["friday", "saturday", "sunday"] as const;
 type Day = (typeof DAYS)[number];
 
-const HOLD_MINUTES = 15;
+// CHANGED: this used to be the payment window (15 min), set the
+// moment a vendor reserved, going straight to Payment after. Now
+// reserving just starts a longer APPROVAL window — the organizer
+// needs to approve first. The real 15-minute payment window only
+// starts once that happens (set by the organizer's Approve action,
+// not here — see BookingRequestsScreen.tsx / OrganizerHomeScreen.tsx).
+const APPROVAL_WINDOW_HOURS = 24;
 
 export default function StallDetailScreen() {
   const { stallId, sessionId } = useLocalSearchParams<{
@@ -64,10 +70,11 @@ export default function StallDetailScreen() {
       if (userId) {
         // Does this vendor already have a live hold/approval on this exact
         // stall for this session? If so, don't let them create a second
-        // one — send them straight back into Payment for the existing one.
+        // one — send them to wherever that existing one actually is:
+        // still waiting on approval, or already cleared to pay.
         const { data: existing } = await supabase
           .from("bookings")
-          .select("id, attending_days, status")
+          .select("id, status")
           .eq("vendor_id", userId)
           .eq("stall_id", stallId)
           .eq("session_id", sessionId)
@@ -75,14 +82,13 @@ export default function StallDetailScreen() {
           .maybeSingle();
 
         if (existing) {
-          const amount =
-            stallData.price_per_day_cents * existing.attending_days.length;
+          // CHANGED: used to always jump to Payment regardless of
+          // status. Now only an already-approved booking goes to
+          // Payment — a still-pending one goes to the booking detail
+          // screen, which shows the "waiting for approval" state.
           router.replace({
-            pathname: "/(vendor)/payment",
-            params: {
-              bookingId: existing.id,
-              amount: Math.round(amount).toString(),
-            },
+            pathname: "/(vendor)/booking-detail",
+            params: { bookingId: existing.id },
           });
           return;
         }
@@ -127,7 +133,7 @@ export default function StallDetailScreen() {
     await supabase.rpc("expire_stale_bookings");
 
     const reservationExpiresAt = new Date(
-      Date.now() + HOLD_MINUTES * 60 * 1000,
+      Date.now() + APPROVAL_WINDOW_HOURS * 60 * 60 * 1000,
     ).toISOString();
 
     const { data: booking, error } = await supabase
@@ -168,12 +174,13 @@ export default function StallDetailScreen() {
 
     setSubmitting(false);
 
+    // CHANGED: used to push straight to Payment with the amount. Now
+    // goes to the booking's own detail screen, which shows "waiting
+    // for approval" until the organizer acts — Payment isn't reachable
+    // until then.
     router.push({
-      pathname: "/(vendor)/payment",
-      params: {
-        bookingId: booking.id,
-        amount: Math.round(total * 100).toString(),
-      },
+      pathname: "/(vendor)/booking-detail",
+      params: { bookingId: booking.id },
     });
   }
 
@@ -225,7 +232,7 @@ export default function StallDetailScreen() {
           <Text style={styles.totalValue}>₱{total.toLocaleString()}</Text>
         </View>
         <PrimaryButton
-          label={submitting ? "Submitting..." : "Continue to payment"}
+          label={submitting ? "Submitting..." : "Request this stall"}
           onPress={handleContinue}
           loading={submitting}
         />
