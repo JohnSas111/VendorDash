@@ -1,8 +1,8 @@
 import { Colors, Radius } from "@/constants/theme";
 import { confirmAsync } from "@/lib/confirmDialog";
 import { supabase } from "@/lib/supabase";
-import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   ActivityIndicator,
   StyleSheet,
@@ -27,39 +27,46 @@ export default function SettingsScreen() {
 
   const insets = useSafeAreaInsets();
 
-  useEffect(() => {
-    async function load() {
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData.user?.id;
-      if (!userId) {
-        router.replace("/(auth)/login");
-        return;
+  useFocusEffect(
+    useCallback(() => {
+      async function load() {
+        setLoading(true);
+
+        const { data: userData } = await supabase.auth.getUser();
+        const userId = userData.user?.id;
+
+        if (!userId) {
+          router.replace("/(auth)/login");
+          return;
+        }
+
+        const [{ data: profile }, { data: vendorDetails }] = await Promise.all([
+          supabase
+            .from("profiles")
+            .select("full_name, phone")
+            .eq("id", userId)
+            .single(),
+          supabase
+            .from("vendor_details")
+            .select("business_name, category")
+            .eq("id", userId)
+            .single(),
+        ]);
+
+        setInfo({
+          fullName: profile?.full_name ?? "—",
+          businessName: vendorDetails?.business_name ?? "—",
+          email: userData.user.email ?? "—",
+          phone: profile?.phone ?? null,
+          category: vendorDetails?.category ?? null,
+        });
+
+        setLoading(false);
       }
 
-      const [{ data: profile }, { data: vendorDetails }] = await Promise.all([
-        supabase
-          .from("profiles")
-          .select("full_name, phone")
-          .eq("id", userId)
-          .single(),
-        supabase
-          .from("vendor_details")
-          .select("business_name, category")
-          .eq("id", userId)
-          .single(),
-      ]);
-
-      setInfo({
-        fullName: profile?.full_name ?? "—",
-        businessName: vendorDetails?.business_name ?? "—",
-        email: userData.user.email ?? "—",
-        phone: profile?.phone ?? null,
-        category: vendorDetails?.category ?? null,
-      });
-      setLoading(false);
-    }
-    load();
-  }, []);
+      load();
+    }, []),
+  );
 
   async function handleLogout() {
     const confirmed = await confirmAsync(

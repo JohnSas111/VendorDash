@@ -15,6 +15,7 @@ export async function pickAndUploadImage(
   filePathWithoutExt: string,
 ): Promise<string | null> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
   if (!permission.granted) {
     throw new Error("Photo library permission is required to upload an image.");
   }
@@ -25,7 +26,7 @@ export async function pickAndUploadImage(
   });
 
   if (result.canceled || !result.assets?.[0]) {
-    return null; // user backed out — not an error
+    return null;
   }
 
   const asset = result.assets[0];
@@ -40,11 +41,12 @@ export async function pickAndUploadImage(
     .from(bucket)
     .upload(filePath, decode(base64), {
       contentType: asset.mimeType ?? "image/jpeg",
-      upsert: true, // re-uploading replaces the old file, e.g. re-submitting a permit
+      upsert: true,
     });
 
-  if (error) throw error;
+  if (error) {
+    throw error;
+  }
 
-  const { data } = supabase.storage.from(bucket).getPublicUrl(filePath);
-  return data.publicUrl;
+  return filePath;
 }
