@@ -11,9 +11,17 @@
 //    forever with only one possible action. Deny clears
 //    refund_requested/refund_reason without touching the booking's
 //    status or payment at all, so the vendor keeps their paid stall.
+//
+// UPDATED: Deny / Confirm refunded used to go through confirmAsync,
+// which falls back to the browser's plain window.confirm() on web —
+// jarring next to the rest of the app. Both now go through the same
+// styled ConfirmModal used everywhere else, stacked on top of this
+// screen's own detail modal.
 
+import { ConfirmModal } from "@/components/ConfirmModal";
+import { PressableButton } from "@/components/PressableButton";
+import { Colors, Spacing, Typography } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
-import { confirmAsync, notify } from "@/lib/confirmDialog";
 import {
   BREAKPOINT,
   COLORS,
@@ -23,12 +31,14 @@ import {
   shared,
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
+import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   useWindowDimensions,
   View,
@@ -45,6 +55,8 @@ type RefundRow = {
   sessionLabel: string;
 };
 
+type PendingAction = { type: "deny" | "confirm"; row: RefundRow };
+
 export default function RefundRequestsScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= BREAKPOINT;
@@ -53,17 +65,21 @@ export default function RefundRequestsScreen() {
     loading: venueLoading,
     error: venueError,
   } = useOrganizerVenue();
+  const { showToast } = useToast();
 
   const [rows, setRows] = useState<RefundRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [selected, setSelected] = useState<RefundRow | null>(null);
+  const [pendingAction, setPendingAction] = useState<PendingAction | null>(
+    null,
+  );
 
   const load = useCallback(async () => {
     if (!venue) return;
     setLoading(true);
 
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("bookings")
       .select(
         `id, refund_reason, attending_days,
@@ -75,6 +91,10 @@ export default function RefundRequestsScreen() {
       .eq("refund_requested", true)
       .eq("status", "paid")
       .eq("stalls.venue_id", venue.id);
+
+    if (error) {
+      showToast("Couldn't load refund requests.", "error");
+    }
 
     const parsed: RefundRow[] = (data ?? []).map((row: any) => {
       const payment = (row.payments ?? []).find(
@@ -97,19 +117,19 @@ export default function RefundRequestsScreen() {
 
     setRows(parsed);
     setLoading(false);
-  }, [venue]);
+  }, [venue, showToast]);
 
   useEffect(() => {
-    load();
+    // Wrapped in a local async function rather than calling load()
+    // directly — calling a useCallback'd function that setStates
+    // straight in the effect body trips react-hooks/set-state-in-effect.
+    async function run() {
+      await load();
+    }
+    run();
   }, [load]);
 
-  const denyRequest = async (row: RefundRow) => {
-    const confirmed = await confirmAsync(
-      "Deny this refund request?",
-      `${row.vendorName}'s booking stays paid and active — they'll just see the request was declined.`,
-    );
-    if (!confirmed) return;
-
+  async function runDeny(row: RefundRow) {
     setProcessingId(row.bookingId);
     const { error } = await supabase
       .from("bookings")
@@ -118,24 +138,15 @@ export default function RefundRequestsScreen() {
     setProcessingId(null);
 
     if (error) {
-      notify("Error", error.message);
+      showToast(error.message || "Couldn't deny that request.", "error");
       return;
     }
+    showToast("Refund request denied.", "info");
     setSelected(null);
     load();
-  };
+  }
 
-  const confirmRefunded = async (row: RefundRow) => {
-    const amountLabel =
-      row.amountCents != null
-        ? formatMoney(row.amountCents)
-        : "an unknown amount";
-    const confirmed = await confirmAsync(
-      "Confirm refund",
-      `Only confirm this AFTER you've processed the ${amountLabel} refund for ${row.vendorName} in the PayMongo dashboard (or manually, if there's no payment record). This just records it here.`,
-    );
-    if (!confirmed) return;
-
+  async function runConfirmRefunded(row: RefundRow) {
     setProcessingId(row.bookingId);
 
     if (row.paymentId) {
@@ -161,7 +172,7 @@ export default function RefundRequestsScreen() {
           throw new Error(body || "Edge Function call failed.");
         }
       } catch (err: any) {
-        notify("Error", err.message ?? "Could not reach process-refund.");
+        showToast(err.message ?? "Could not reach process-refund.", "error");
         setProcessingId(null);
         load();
         return;
@@ -172,7 +183,7 @@ export default function RefundRequestsScreen() {
         .update({ status: "cancelled", refund_requested: false })
         .eq("id", row.bookingId);
       if (error) {
-        notify("Error", error.message);
+        showToast(error.message, "error");
         setProcessingId(null);
         load();
         return;
@@ -181,14 +192,37 @@ export default function RefundRequestsScreen() {
 
     setProcessingId(null);
     setSelected(null);
+    showToast("Refund recorded.", "success");
     load();
-  };
+  }
+
+  function handleDenyPress(row: RefundRow) {
+    setPendingAction({ type: "deny", row });
+  }
+
+  function handleConfirmRefundedPress(row: RefundRow) {
+    setPendingAction({ type: "confirm", row });
+  }
+
+  function runPendingAction() {
+    if (!pendingAction) return;
+    const { type, row } = pendingAction;
+    setPendingAction(null);
+    if (type === "deny") runDeny(row);
+    else runConfirmRefunded(row);
+  }
 
   if (venueLoading || loading) {
     return (
-      <View style={shared.centerFill}>
-        <ActivityIndicator color={COLORS.inkNavy} />
-      </View>
+      <ScrollView
+        style={shared.screen}
+        contentContainerStyle={[
+          shared.content,
+          isDesktop && shared.contentDesktop,
+        ]}
+      >
+        <RefundListSkeleton />
+      </ScrollView>
     );
   }
   if (venueError) {
@@ -198,6 +232,11 @@ export default function RefundRequestsScreen() {
       </View>
     );
   }
+
+  const amountLabel =
+    pendingAction?.row.amountCents != null
+      ? formatMoney(pendingAction.row.amountCents)
+      : "an unknown amount";
 
   return (
     <ScrollView
@@ -215,12 +254,16 @@ export default function RefundRequestsScreen() {
 
       {rows.length === 0 ? (
         <View style={shared.emptyState}>
-          <Text style={shared.emptyStateText}>No refund requests pending.</Text>
+          <Ionicons name="cash-outline" size={26} color={COLORS.slate} />
+          <Text style={[shared.emptyStateText, { marginTop: Spacing.xs }]}>
+            No refund requests pending.
+          </Text>
         </View>
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={styles.list}>
           {rows.map((r) => (
             <Pressable
+              accessibilityRole="button"
               key={r.bookingId}
               onPress={() => setSelected(r)}
               style={[shared.row, isDesktop && shared.rowDesktop]}
@@ -234,29 +277,24 @@ export default function RefundRequestsScreen() {
                     : "amount unknown"}
                 </Text>
                 {r.reason && (
-                  <Text
-                    numberOfLines={1}
-                    style={{
-                      fontSize: 12,
-                      color: COLORS.slate,
-                      marginTop: 4,
-                      fontStyle: "italic",
-                    }}
-                  >
-                    "{r.reason}"
+                  <Text numberOfLines={1} style={styles.reasonPreview}>
+                    {`"${r.reason}"`}
                   </Text>
                 )}
               </View>
-              <Text
-                style={{
-                  fontSize: 12,
-                  color: COLORS.inkNavy,
-                  fontWeight: "600",
-                  marginTop: isDesktop ? 0 : 10,
-                }}
+              <View
+                style={[
+                  styles.viewDetailsRow,
+                  !isDesktop && { marginTop: Spacing.md },
+                ]}
               >
-                View details →
-              </Text>
+                <Text style={styles.viewDetailsText}>View details</Text>
+                <Ionicons
+                  name="chevron-forward"
+                  size={14}
+                  color={COLORS.inkNavy}
+                />
+              </View>
             </Pressable>
           ))}
         </View>
@@ -268,17 +306,9 @@ export default function RefundRequestsScreen() {
         animationType="fade"
         onRequestClose={() => setSelected(null)}
       >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(22,25,43,0.4)",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-          }}
-        >
+        <View style={styles.modalBackdrop}>
           {selected && (
-            <View style={[shared.card, { width: "100%", maxWidth: 440 }]}>
+            <View style={[shared.card, styles.detailCard]}>
               <Text style={shared.rowTitle}>{selected.vendorName}</Text>
               <Text style={shared.rowSubtitle}>
                 Stall {selected.stallNumber} · {selected.sessionLabel}
@@ -286,78 +316,165 @@ export default function RefundRequestsScreen() {
               <Text style={shared.rowSubtitle}>
                 Attending: {selected.attendingDays.join(", ") || "—"}
               </Text>
-              <Text
-                style={[
-                  shared.rowSubtitle,
-                  { marginTop: 8, fontWeight: "700", color: COLORS.inkNavy },
-                ]}
-              >
+              <Text style={styles.detailAmount}>
                 {selected.amountCents != null
                   ? formatMoney(selected.amountCents)
                   : "Amount unknown — no payment record found"}
               </Text>
 
-              <View
-                style={{
-                  marginTop: 16,
-                  padding: 12,
-                  backgroundColor: COLORS.paper,
-                  borderRadius: RADIUS.sm,
-                }}
-              >
-                <Text
-                  style={{
-                    fontSize: 11,
-                    fontWeight: "700",
-                    color: COLORS.slate,
-                    textTransform: "uppercase",
-                    marginBottom: 4,
-                  }}
-                >
-                  Reason
-                </Text>
-                <Text style={{ fontSize: 14, color: COLORS.inkNavy }}>
+              <View style={styles.reasonBox}>
+                <Text style={styles.reasonLabel}>Reason</Text>
+                <Text style={styles.reasonText}>
                   {selected.reason || "No reason given."}
                 </Text>
               </View>
 
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 20 }}>
-                <Pressable
+              <View style={styles.detailActions}>
+                <PressableButton
                   style={[
                     shared.dangerOutlineButton,
-                    { flex: 1, alignItems: "center" },
+                    styles.detailActionButton,
                   ]}
                   disabled={processingId === selected.bookingId}
-                  onPress={() => denyRequest(selected)}
+                  onPress={() => handleDenyPress(selected)}
                 >
                   <Text style={shared.dangerOutlineButtonText}>Deny</Text>
-                </Pressable>
-                <Pressable
-                  style={[
-                    shared.successButton,
-                    { flex: 1, alignItems: "center" },
-                  ]}
+                </PressableButton>
+                <PressableButton
+                  style={[shared.successButton, styles.detailActionButton]}
                   disabled={processingId === selected.bookingId}
-                  onPress={() => confirmRefunded(selected)}
+                  onPress={() => handleConfirmRefundedPress(selected)}
                 >
                   <Text style={shared.successButtonText}>
                     {processingId === selected.bookingId
                       ? "Processing…"
                       : "Confirm refunded"}
                   </Text>
-                </Pressable>
+                </PressableButton>
               </View>
 
               <Pressable
-                style={{ marginTop: 12, alignItems: "center" }}
+                accessibilityRole="button"
+                style={styles.closeRow}
                 onPress={() => setSelected(null)}
               >
-                <Text style={{ color: COLORS.slate, fontSize: 13 }}>Close</Text>
+                <Text style={styles.closeText}>Close</Text>
               </Pressable>
             </View>
           )}
         </View>
       </Modal>
+
+      <ConfirmModal
+        visible={!!pendingAction}
+        title={
+          pendingAction?.type === "deny"
+            ? "Deny this refund request?"
+            : "Confirm refund"
+        }
+        message={
+          pendingAction?.type === "deny"
+            ? `${pendingAction.row.vendorName}'s booking stays paid and active — they'll just see the request was declined.`
+            : `Only confirm this AFTER you've processed the ${amountLabel} refund for ${pendingAction?.row.vendorName} in the PayMongo dashboard (or manually, if there's no payment record). This just records it here.`
+        }
+        confirmLabel={
+          pendingAction?.type === "deny" ? "Deny request" : "Confirm refunded"
+        }
+        cancelLabel="Go back"
+        destructive={pendingAction?.type === "deny"}
+        onConfirm={runPendingAction}
+        onDismiss={() => setPendingAction(null)}
+      />
     </ScrollView>
   );
 }
+
+// Placeholder rows shown while the request list is loading.
+function RefundListSkeleton() {
+  return (
+    <View>
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: 170, height: 22, marginBottom: Spacing.sm },
+        ]}
+      />
+      <View
+        style={[styles.skeletonLine, { width: 260, marginBottom: Spacing.lg }]}
+      />
+      <View style={styles.list}>
+        {[0, 1].map((i) => (
+          <View key={i} style={[shared.row, styles.skeletonRow]} />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  list: { gap: Spacing.sm },
+  reasonPreview: {
+    fontSize: Typography.sm,
+    color: COLORS.slate,
+    marginTop: Spacing.xs,
+    fontStyle: "italic",
+  },
+  viewDetailsRow: { flexDirection: "row", alignItems: "center", gap: 2 },
+  viewDetailsText: {
+    fontSize: Typography.sm,
+    color: COLORS.inkNavy,
+    fontWeight: "600",
+  },
+  skeletonRow: {
+    backgroundColor: COLORS.border,
+    borderColor: COLORS.border,
+    shadowOpacity: 0,
+    minHeight: 70,
+  },
+  skeletonLine: {
+    height: 12,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.border,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: Colors.overlay,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: Spacing.xl,
+  },
+  detailCard: { width: "100%", maxWidth: 440 },
+  detailAmount: {
+    fontSize: Typography.base,
+    color: COLORS.inkNavy,
+    fontWeight: "700",
+    marginTop: Spacing.sm,
+  },
+  reasonBox: {
+    marginTop: Spacing.lg,
+    padding: Spacing.md,
+    backgroundColor: COLORS.paper,
+    borderRadius: RADIUS.sm,
+  },
+  reasonLabel: {
+    fontSize: Typography.xs,
+    fontWeight: "700",
+    color: COLORS.slate,
+    textTransform: "uppercase",
+    marginBottom: Spacing.xs,
+  },
+  reasonText: { fontSize: Typography.md, color: COLORS.inkNavy },
+  detailActions: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+    marginTop: Spacing.xl,
+  },
+  detailActionButton: { flex: 1, alignItems: "center" },
+  closeRow: {
+    marginTop: Spacing.md,
+    alignItems: "center",
+    minHeight: 44,
+    justifyContent: "center",
+  },
+  closeText: { color: COLORS.slate, fontSize: Typography.base },
+});

@@ -1,9 +1,12 @@
+import { PrimaryButton } from "@/components/PrimaryButton";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Colors, Radius } from "@/constants/theme";
+import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import {
+  Animated,
   FlatList,
   RefreshControl,
   StyleSheet,
@@ -18,8 +21,21 @@ type BookingRow = {
   status: string;
   attending_days: string[];
   stalls: { stall_number: string } | null;
-  market_sessions: { friday_date: string; sunday_date: string } | null;
+  market_sessions: {
+    friday_date: string;
+    sunday_date: string;
+    venues: { name: string } | null;
+  } | null;
 };
+
+// Computes "Good morning / afternoon / evening" from the current hour
+// instead of the string that used to be hardcoded to "Good evening".
+function getGreeting(): string {
+  const hour = new Date().getHours();
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
 
 export default function VendorHomeScreen() {
   const [businessName, setBusinessName] = useState("");
@@ -28,10 +44,16 @@ export default function VendorHomeScreen() {
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const insets = useSafeAreaInsets();
+  // useState's lazy initializer (not useRef().current) — reading a ref's
+  // .current during render trips the react-hooks/refs rule; a stable value
+  // pulled from state doesn't.
+  const [fadeAnim] = useState(() => new Animated.Value(0));
 
   const loadData = useCallback(async () => {
+    setLoadError(null);
     const { data: userData } = await supabase.auth.getUser();
     const userId = userData.user?.id;
     if (!userId) {
@@ -61,13 +83,19 @@ export default function VendorHomeScreen() {
     const { data: bookingData, error } = await supabase
       .from("bookings")
       .select(
-        "id, status, attending_days, stalls(stall_number), market_sessions(friday_date, sunday_date)",
+        "id, status, attending_days, stalls(stall_number), market_sessions(friday_date, sunday_date, venues(name))",
       )
       .eq("vendor_id", userId)
       .order("requested_at", { ascending: false });
 
-    if (!error && bookingData)
-      setBookings(bookingData as unknown as BookingRow[]);
+    // Previously `if (!error && bookingData)` — a failed fetch just left the
+    // list empty/stale with no feedback. Now a failure surfaces an inline,
+    // dismissible error banner instead of failing silently.
+    if (error) {
+      setLoadError("Couldn't load your bookings. Pull down to try again.");
+      return;
+    }
+    if (bookingData) setBookings(bookingData as unknown as BookingRow[]);
   }, []);
 
   // Re-fetch every time this screen becomes focused — e.g. navigating back
@@ -76,6 +104,21 @@ export default function VendorHomeScreen() {
     useCallback(() => {
       loadData().finally(() => setLoading(false));
     }, [loadData]),
+  );
+
+  // Fade the content in once the first load finishes, instead of it
+  // popping in abruptly.
+  useFocusEffect(
+    useCallback(() => {
+      if (!loading) {
+        fadeAnim.setValue(0);
+        Animated.timing(fadeAnim, {
+          toValue: 1,
+          duration: 220,
+          useNativeDriver: true,
+        }).start();
+      }
+    }, [loading, fadeAnim]),
   );
 
   async function onRefresh() {
@@ -100,18 +143,29 @@ export default function VendorHomeScreen() {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
+    <View style={[styles.container, { paddingTop: insets.top + Spacing.md }]}>
       <View style={styles.headerRow}>
         <View>
-          <Text style={styles.greeting}>Good evening</Text>
+          <Text style={styles.greeting}>{getGreeting()}</Text>
           <Text style={styles.name}>{businessName || "Vendor"}</Text>
         </View>
         <View style={styles.headerIcons}>
           <TouchableOpacity
             style={styles.iconButton}
+            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
             onPress={() => router.push("/(vendor)/notifications")}
+            accessibilityRole="button"
+            accessibilityLabel={
+              unreadCount > 0
+                ? `Notifications, ${unreadCount} unread`
+                : "Notifications"
+            }
           >
-            <Text style={styles.icon}>🔔</Text>
+            <Ionicons
+              name="notifications-outline"
+              size={22}
+              color={Colors.text}
+            />
             {unreadCount > 0 && (
               <View style={styles.badge}>
                 <Text style={styles.badgeText}>
@@ -123,80 +177,126 @@ export default function VendorHomeScreen() {
         </View>
       </View>
 
+      {loadError && (
+        <View style={styles.errorBanner}>
+          <Ionicons
+            name="alert-circle-outline"
+            size={16}
+            color={Colors.booked}
+          />
+          <Text style={styles.errorBannerText}>{loadError}</Text>
+        </View>
+      )}
+
       {!loading && !profileComplete && (
         <TouchableOpacity
+          accessibilityRole="button"
           style={styles.banner}
           onPress={() => router.push("/(vendor)/complete-profile")}
         >
           <Text style={styles.bannerTitle}>
             Complete your profile to browse stalls
           </Text>
-          <Text style={styles.bannerAction}>Finish setup →</Text>
+          <View style={styles.bannerActionRow}>
+            <Text style={styles.bannerAction}>Finish setup</Text>
+            <Ionicons name="chevron-forward" size={14} color={Colors.info} />
+          </View>
         </TouchableOpacity>
       )}
 
       <Text style={styles.sectionLabel}>Your bookings</Text>
 
-      <FlatList
-        data={bookings}
-        keyExtractor={(item) => item.id}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-        }
-        ListEmptyComponent={
-          !loading ? (
-            <View style={styles.emptyState}>
-              <Text style={styles.emptyTitle}>No bookings yet</Text>
-              <Text style={styles.emptyText}>
-                {profileComplete
-                  ? "Reserve a stall for this weekend's market"
-                  : "Complete your profile first, then reserve a stall"}
-              </Text>
-              <TouchableOpacity
-                style={styles.emptyButton}
-                onPress={handleBrowsePress}
-              >
-                <Text style={styles.emptyButtonText}>
-                  {profileComplete ? "Book a stall" : "Complete profile"}
+      {loading ? (
+        <HomeSkeleton />
+      ) : (
+        <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+          <FlatList
+            data={bookings}
+            keyExtractor={(item) => item.id}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+            ListEmptyComponent={
+              <View style={styles.emptyState}>
+                <Ionicons
+                  name="storefront-outline"
+                  size={32}
+                  color={Colors.textMuted}
+                  style={{ marginBottom: Spacing.sm }}
+                />
+                <Text style={styles.emptyTitle}>No bookings yet</Text>
+                <Text style={styles.emptyText}>
+                  {profileComplete
+                    ? "Reserve a stall for this weekend's market"
+                    : "Complete your profile first, then reserve a stall"}
                 </Text>
-              </TouchableOpacity>
-            </View>
-          ) : null
-        }
-        renderItem={({ item }) => {
-          const dateLabel = item.market_sessions
-            ? formatDateRange(
-                item.market_sessions.friday_date,
-                item.market_sessions.sunday_date,
-              )
-            : "Date unavailable";
-
-          return (
-            <TouchableOpacity
-              style={styles.card}
-              onPress={() =>
-                router.push({
-                  pathname: "/(vendor)/booking-detail",
-                  params: { bookingId: item.id },
-                })
-              }
-            >
-              <View style={styles.cardRow}>
-                <Text style={styles.cardTitle}>Poblacion night market</Text>
-                <StatusBadge status={item.status} />
+                <PrimaryButton
+                  label={profileComplete ? "Book a stall" : "Complete profile"}
+                  onPress={handleBrowsePress}
+                />
               </View>
-              <Text style={styles.cardSubtitle}>
-                {dateLabel} · Stall {item.stalls?.stall_number ?? "—"} · tap for
-                details
-              </Text>
-            </TouchableOpacity>
-          );
-        }}
-      />
+            }
+            renderItem={({ item }) => {
+              const dateLabel = item.market_sessions
+                ? formatDateRange(
+                    item.market_sessions.friday_date,
+                    item.market_sessions.sunday_date,
+                  )
+                : "Date unavailable";
+              const marketName = item.market_sessions?.venues?.name ?? "Market";
 
-      <TouchableOpacity style={styles.button} onPress={handleBrowsePress}>
-        <Text style={styles.buttonText}>Browse markets</Text>
-      </TouchableOpacity>
+              return (
+                <TouchableOpacity
+                  accessibilityRole="button"
+                  style={styles.card}
+                  activeOpacity={0.7}
+                  onPress={() =>
+                    router.push({
+                      pathname: "/(vendor)/booking-detail",
+                      params: { bookingId: item.id },
+                    })
+                  }
+                >
+                  <View style={styles.cardRow}>
+                    <Text style={styles.cardTitle}>{marketName}</Text>
+                    <StatusBadge status={item.status} />
+                  </View>
+                  <Text style={styles.cardSubtitle}>
+                    {dateLabel} · Stall {item.stalls?.stall_number ?? "—"} · tap
+                    for details
+                  </Text>
+                </TouchableOpacity>
+              );
+            }}
+          />
+        </Animated.View>
+      )}
+
+      {!loading && (
+        <View style={{ marginTop: Spacing.md }}>
+          <PrimaryButton label="Browse markets" onPress={handleBrowsePress} />
+        </View>
+      )}
+    </View>
+  );
+}
+
+// Placeholder cards shown while the initial fetch is in flight, so the
+// screen never shows a blank gap or a lone spinner.
+function HomeSkeleton() {
+  return (
+    <View>
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={[styles.card, styles.skeletonCard]}>
+          <View style={[styles.skeletonLine, { width: "50%" }]} />
+          <View
+            style={[
+              styles.skeletonLine,
+              { width: "75%", marginTop: Spacing.sm },
+            ]}
+          />
+        </View>
+      ))}
     </View>
   );
 }
@@ -205,26 +305,30 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
-    padding: 20,
-    paddingTop: 20,
+    padding: Spacing.xl,
   },
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
-    marginBottom: 12,
+    marginBottom: Spacing.md,
   },
-  greeting: { fontSize: 11, color: Colors.textMuted },
-  name: { fontSize: 15, fontWeight: "500" },
-  headerIcons: { flexDirection: "row", gap: 14 },
-  iconButton: { position: "relative" },
-  icon: { fontSize: 20, color: Colors.textMuted },
+  greeting: { fontSize: Typography.xs, color: Colors.textMuted },
+  name: { fontSize: Typography.md, fontWeight: "500", color: Colors.text },
+  headerIcons: { flexDirection: "row", gap: Spacing.md },
+  iconButton: {
+    position: "relative",
+    width: 44,
+    height: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
   badge: {
     position: "absolute",
-    top: -4,
-    right: -6,
+    top: 4,
+    right: 4,
     backgroundColor: Colors.booked,
-    borderRadius: 8,
+    borderRadius: Radius.sm,
     minWidth: 16,
     height: 16,
     alignItems: "center",
@@ -232,64 +336,86 @@ const styles = StyleSheet.create({
     paddingHorizontal: 3,
   },
   badgeText: { color: Colors.white, fontSize: 9, fontWeight: "700" },
+  errorBanner: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    backgroundColor: Colors.dangerLight,
+    borderRadius: Radius.sm,
+    padding: Spacing.md,
+    marginBottom: Spacing.md,
+  },
+  errorBannerText: { fontSize: Typography.sm, color: Colors.booked, flex: 1 },
   banner: {
     backgroundColor: Colors.infoLight,
     borderRadius: Radius.sm,
-    padding: 12,
-    marginBottom: 16,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
   bannerTitle: {
-    fontSize: 12,
+    fontSize: Typography.sm,
     fontWeight: "600",
     color: Colors.info,
     flex: 1,
-    marginRight: 8,
+    marginRight: Spacing.sm,
   },
-  bannerAction: { fontSize: 12, fontWeight: "600", color: Colors.info },
-  sectionLabel: { fontSize: 12, color: Colors.textMuted, marginBottom: 8 },
+  bannerActionRow: { flexDirection: "row", alignItems: "center", gap: 2 },
+  bannerAction: {
+    fontSize: Typography.sm,
+    fontWeight: "600",
+    color: Colors.info,
+  },
+  sectionLabel: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    marginBottom: Spacing.sm,
+  },
   emptyState: {
     alignItems: "center",
-    paddingVertical: 40,
-    paddingHorizontal: 20,
+    paddingVertical: Spacing.xxxl + Spacing.sm,
+    paddingHorizontal: Spacing.xl,
   },
-  emptyTitle: { fontSize: 15, fontWeight: "600", marginBottom: 4 },
+  emptyTitle: {
+    fontSize: Typography.md,
+    fontWeight: "600",
+    color: Colors.text,
+    marginBottom: Spacing.xs,
+  },
   emptyText: {
-    fontSize: 13,
+    fontSize: Typography.base,
     color: Colors.textMuted,
     textAlign: "center",
-    marginBottom: 16,
+    marginBottom: Spacing.lg,
   },
-  emptyButton: {
-    backgroundColor: Colors.text,
-    borderRadius: Radius.sm,
-    paddingVertical: 12,
-    paddingHorizontal: 28,
-  },
-  emptyButtonText: { color: Colors.white, fontSize: 14, fontWeight: "600" },
   card: {
-    borderWidth: 1,
-    borderColor: Colors.borderLight,
     borderRadius: Radius.md,
-    padding: 12,
-    marginBottom: 10,
+    padding: Spacing.lg,
+    marginBottom: Spacing.sm,
     backgroundColor: Colors.white,
+    ...Shadow.sm,
+  },
+  skeletonCard: { opacity: 0.6 },
+  skeletonLine: {
+    height: 10,
+    borderRadius: Radius.xs,
+    backgroundColor: Colors.borderLight,
   },
   cardRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
   },
-  cardTitle: { fontSize: 13, fontWeight: "500" },
-  cardSubtitle: { fontSize: 12, color: Colors.textMuted, marginTop: 4 },
-  button: {
-    backgroundColor: Colors.text,
-    borderRadius: Radius.sm,
-    padding: 14,
-    alignItems: "center",
-    marginTop: 12,
+  cardTitle: {
+    fontSize: Typography.base,
+    fontWeight: "500",
+    color: Colors.text,
   },
-  buttonText: { color: Colors.white, fontSize: 14, fontWeight: "600" },
+  cardSubtitle: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    marginTop: Spacing.xs,
+  },
 });

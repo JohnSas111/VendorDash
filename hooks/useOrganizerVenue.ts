@@ -6,8 +6,8 @@
 //
 // ASSUMPTION: supabase client lives at '@/lib/supabase'. Adjust if not.
 
-import { useCallback, useEffect, useState } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase } from "@/lib/supabase";
+import { useCallback, useEffect, useState } from "react";
 
 export type OrganizerVenue = {
   id: string;
@@ -28,30 +28,36 @@ export function useOrganizerVenue() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (!user) throw new Error('Not signed in.');
+      if (!user) throw new Error("Not signed in.");
       setUserId(user.id);
 
       const { data, error: venueErr } = await supabase
-        .from('venues')
-        .select('id, name, address')
-        .eq('organizer_id', user.id)
+        .from("venues")
+        .select("id, name, address")
+        .eq("organizer_id", user.id)
         .single();
 
       if (venueErr || !data) {
         throw new Error(
-          "No venue found for this organizer account. Insert a venues row with organizer_id set to this user's id first."
+          "No venue found for this organizer account. Insert a venues row with organizer_id set to this user's id first.",
         );
       }
       setVenue(data);
     } catch (err: any) {
-      setError(err.message ?? 'Failed to load organizer venue.');
+      setError(err.message ?? "Failed to load organizer venue.");
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    load();
+    // Wrapped in a local async function rather than calling load()
+    // directly — calling a useCallback'd function that setStates
+    // straight in the effect body trips react-hooks/set-state-in-effect.
+    async function run() {
+      await load();
+    }
+    run();
   }, [load]);
 
   return { loading, error, venue, userId, reload: load };

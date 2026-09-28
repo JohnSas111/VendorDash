@@ -1,5 +1,10 @@
+import { ConfirmModal } from "@/components/ConfirmModal";
+import { Spacing } from "@/constants/theme";
 import { BREAKPOINT, COLORS, RADIUS } from "@/lib/organizerTheme";
+import { supabase } from "@/lib/supabase";
+import { Ionicons } from "@expo/vector-icons";
 import { usePathname, useRouter } from "expo-router";
+import { useState } from "react";
 import {
   Pressable,
   ScrollView,
@@ -51,58 +56,106 @@ export default function OrganizerNav() {
   const isDesktop = width >= BREAKPOINT;
   const router = useRouter();
   const pathname = usePathname(); // e.g. "/overview"
+  const [signOutConfirmVisible, setSignOutConfirmVisible] = useState(false);
 
   const isActive = (name: string) => pathname === `/${name}`;
   const go = (name: string) => router.push(`/${name}` as any);
 
+  async function confirmSignOut() {
+    setSignOutConfirmVisible(false);
+    await supabase.auth.signOut();
+  }
+
   if (isDesktop) {
     return (
       <View style={styles.sidebar}>
-        <Text style={styles.sidebarBrand}>VendorDash</Text>
-        <Text style={styles.sidebarBrandSub}>Organizer</Text>
-        <View style={{ height: 20 }} />
-
-        <Pressable
-          onPress={() => go(OVERVIEW.name)}
-          style={[
-            styles.sidebarItem,
-            isActive(OVERVIEW.name) && styles.sidebarItemActive,
-          ]}
+        {/* BUGFIX: this used to be one long View with no ScrollView — on a
+            short browser window the bottom items (Settings) rendered off
+            the bottom edge with no way to reach them. The nav list is now
+            its own scrollable region, with Sign out pinned in a footer
+            below it so it's always reachable regardless of window height
+            or how many nav items exist. */}
+        <ScrollView
+          style={styles.sidebarScroll}
+          contentContainerStyle={styles.sidebarScrollContent}
+          showsVerticalScrollIndicator={false}
         >
-          <Text
+          <Text style={styles.sidebarBrand}>VendorDash</Text>
+          <Text style={styles.sidebarBrandSub}>Organizer</Text>
+          <View style={{ height: Spacing.xl }} />
+
+          <Pressable
+            accessibilityRole="button"
+            accessibilityState={{ selected: isActive(OVERVIEW.name) }}
+            onPress={() => go(OVERVIEW.name)}
             style={[
-              styles.sidebarItemText,
-              isActive(OVERVIEW.name) && styles.sidebarItemTextActive,
+              styles.sidebarItem,
+              isActive(OVERVIEW.name) && styles.sidebarItemActive,
             ]}
           >
-            {OVERVIEW.label}
-          </Text>
-        </Pressable>
+            <Text
+              style={[
+                styles.sidebarItemText,
+                isActive(OVERVIEW.name) && styles.sidebarItemTextActive,
+              ]}
+            >
+              {OVERVIEW.label}
+            </Text>
+          </Pressable>
 
-        {GROUPS.map((group) => (
-          <View key={group.section} style={{ marginTop: 16 }}>
-            <Text style={styles.sectionLabel}>{group.section}</Text>
-            {group.items.map((item) => (
-              <Pressable
-                key={item.name}
-                onPress={() => go(item.name)}
-                style={[
-                  styles.sidebarItem,
-                  isActive(item.name) && styles.sidebarItemActive,
-                ]}
-              >
-                <Text
+          {GROUPS.map((group) => (
+            <View key={group.section} style={{ marginTop: Spacing.lg }}>
+              <Text style={styles.sectionLabel}>{group.section}</Text>
+              {group.items.map((item) => (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityState={{ selected: isActive(item.name) }}
+                  key={item.name}
+                  onPress={() => go(item.name)}
                   style={[
-                    styles.sidebarItemText,
-                    isActive(item.name) && styles.sidebarItemTextActive,
+                    styles.sidebarItem,
+                    isActive(item.name) && styles.sidebarItemActive,
                   ]}
                 >
-                  {item.label}
-                </Text>
-              </Pressable>
-            ))}
-          </View>
-        ))}
+                  <Text
+                    style={[
+                      styles.sidebarItemText,
+                      isActive(item.name) && styles.sidebarItemTextActive,
+                    ]}
+                  >
+                    {item.label}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          ))}
+        </ScrollView>
+
+        {/* Sign out lived only inside the Settings screen before — a few
+            taps away and easy to lose track of. Pinning it here makes it
+            reachable from anywhere in the organizer app, on one tap,
+            without hunting for it. */}
+        <View style={styles.sidebarFooter}>
+          <Pressable
+            style={styles.signOutButton}
+            onPress={() => setSignOutConfirmVisible(true)}
+            accessibilityRole="button"
+            accessibilityLabel="Sign out"
+          >
+            <Ionicons name="log-out-outline" size={16} color={COLORS.clay} />
+            <Text style={styles.signOutText}>Sign out</Text>
+          </Pressable>
+        </View>
+
+        <ConfirmModal
+          visible={signOutConfirmVisible}
+          title="Sign out"
+          message="Are you sure you want to sign out?"
+          confirmLabel="Sign out"
+          cancelLabel="Stay signed in"
+          onConfirm={confirmSignOut}
+          onDismiss={() => setSignOutConfirmVisible(false)}
+        />
       </View>
     );
   }
@@ -116,6 +169,8 @@ export default function OrganizerNav() {
     >
       {ALL_ITEMS.map((item) => (
         <Pressable
+          accessibilityRole="button"
+          accessibilityState={{ selected: isActive(item.name) }}
           key={item.name}
           onPress={() => go(item.name)}
           style={styles.mobileItem}
@@ -141,10 +196,28 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white,
     borderRightWidth: 1,
     borderRightColor: COLORS.border,
-    paddingTop: 32,
-    paddingHorizontal: 16,
-    paddingBottom: 24,
   },
+  sidebarScroll: { flex: 1 },
+  sidebarScrollContent: {
+    paddingTop: Spacing.xxl,
+    paddingHorizontal: Spacing.lg,
+    paddingBottom: Spacing.lg,
+  },
+  sidebarFooter: {
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
+    padding: Spacing.md,
+  },
+  signOutButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.sm,
+    borderRadius: RADIUS.sm,
+    minHeight: 44,
+  },
+  signOutText: { fontSize: 14, color: COLORS.clayText, fontWeight: "600" },
   sidebarBrand: {
     fontFamily: "serif",
     fontSize: 18,
@@ -171,6 +244,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 10,
     borderRadius: RADIUS.sm,
     marginBottom: 2,
+    minHeight: 40,
+    justifyContent: "center",
   },
   sidebarItemActive: { backgroundColor: COLORS.paper },
   sidebarItemText: { fontSize: 14, color: COLORS.slate, fontWeight: "500" },
@@ -189,7 +264,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   mobileItemText: { fontSize: 12, color: COLORS.slate, fontWeight: "500" },
-  mobileItemTextActive: { color: COLORS.amber, fontWeight: "700" },
+  mobileItemTextActive: { color: COLORS.inkNavy, fontWeight: "700" },
   mobileIndicator: {
     marginTop: 4,
     width: 4,

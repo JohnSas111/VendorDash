@@ -1,3 +1,5 @@
+// PATH: app/(vendor)/_layout.tsx  (replace the file at exactly this path)
+import { Colors } from "@/constants/theme";
 import { Stack } from "expo-router";
 
 export default function VendorLayout() {
@@ -7,8 +9,9 @@ export default function VendorLayout() {
         headerShown: true,
         headerTitle: "",
         headerShadowVisible: false,
-        headerStyle: { backgroundColor: "#F5F5F5" },
-        headerTintColor: "#1A1A1A",
+        contentStyle: { backgroundColor: Colors.background },
+        headerStyle: { backgroundColor: Colors.background },
+        headerTintColor: Colors.text,
       }}
     >
       {/* The tab bar itself — Home / My Bookings / Settings */}

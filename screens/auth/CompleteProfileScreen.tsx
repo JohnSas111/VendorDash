@@ -1,16 +1,48 @@
-import { useState } from 'react';
-import { View, Text, TouchableOpacity, StyleSheet, Alert } from 'react-native';
-import { router } from 'expo-router';
-import { supabase } from '@/lib/supabase';
-import { InputField } from '@/components/InputField';
-import { PrimaryButton } from '@/components/PrimaryButton';
-import { Colors, Radius } from '@/constants/theme';
+// PATH: screens/auth/CompleteProfileScreen.tsx  (replace the file at exactly this path)
+import { InputField } from "@/components/InputField";
+import { PrimaryButton } from "@/components/PrimaryButton";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
+import { pickAndUploadImage } from "@/lib/upload";
+import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
+import { useState } from "react";
+import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 export default function CompleteProfileScreen() {
-  const [phone, setPhone] = useState('');
-  const [category, setCategory] = useState('');
-  const [description, setDescription] = useState('');
+  const [phone, setPhone] = useState("");
+  const [category, setCategory] = useState("");
+  const [description, setDescription] = useState("");
+  const [permitUrl, setPermitUrl] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
+  const { showToast } = useToast();
+
+  async function handleUploadPermit() {
+    const { data: userData } = await supabase.auth.getUser();
+    const userId = userData.user?.id;
+    if (!userId) return;
+
+    setUploading(true);
+    try {
+      const url = await pickAndUploadImage(
+        "business-permits",
+        `${userId}/permit`,
+      );
+      if (url) {
+        setPermitUrl(url);
+        showToast("Permit image uploaded.", "success");
+      }
+    } catch (err) {
+      showToast(
+        err instanceof Error ? err.message : "Upload failed. Please try again.",
+        "error",
+      );
+    } finally {
+      setUploading(false);
+    }
+  }
 
   async function handleSave() {
     setLoading(true);
@@ -18,42 +50,56 @@ export default function CompleteProfileScreen() {
     const { data: userData, error: userError } = await supabase.auth.getUser();
     if (userError || !userData.user) {
       setLoading(false);
-      Alert.alert('Something went wrong', 'Please log in again.');
-      router.replace('/(auth)/login');
+      showToast("Something went wrong. Please log in again.", "error");
+      router.replace("/(auth)/login");
       return;
     }
 
     const userId = userData.user.id;
 
-    const { error: profileError } = await supabase.from('profiles').update({ phone }).eq('id', userId);
+    const { error: profileError } = await supabase
+      .from("profiles")
+      .update({ phone })
+      .eq("id", userId);
     if (profileError) {
       setLoading(false);
-      Alert.alert('Save failed', profileError.message);
+      showToast(profileError.message || "Save failed.", "error");
       return;
     }
 
     const { error: vendorError } = await supabase
-      .from('vendor_details')
-      .update({ category, description })
-      .eq('id', userId);
+      .from("vendor_details")
+      .update({ category, description, business_permit_url: permitUrl })
+      .eq("id", userId);
 
     setLoading(false);
 
     if (vendorError) {
-      Alert.alert('Save failed', vendorError.message);
+      showToast(vendorError.message || "Save failed.", "error");
       return;
     }
 
-    router.replace('/(vendor)/home');
+    router.replace("/(vendor)/home");
   }
 
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Complete your profile</Text>
-      <Text style={styles.subtitle}>Vendors need this before booking a stall</Text>
+      <Text style={styles.subtitle}>
+        Vendors need this before booking a stall
+      </Text>
 
-      <InputField placeholder="Phone number" value={phone} onChangeText={setPhone} keyboardType="phone-pad" />
-      <InputField placeholder="Business category (e.g. Food, Crafts)" value={category} onChangeText={setCategory} />
+      <InputField
+        placeholder="Phone number"
+        value={phone}
+        onChangeText={setPhone}
+        keyboardType="phone-pad"
+      />
+      <InputField
+        placeholder="Business category (e.g. Food, Crafts)"
+        value={category}
+        onChangeText={setCategory}
+      />
       <InputField
         placeholder="Business description"
         value={description}
@@ -63,29 +109,87 @@ export default function CompleteProfileScreen() {
       />
 
       <TouchableOpacity
+        accessibilityRole="button"
         style={styles.uploadBox}
-        onPress={() => Alert.alert('Coming soon', 'File upload will be wired up next.')}
+        onPress={handleUploadPermit}
+        disabled={uploading}
       >
-        <Text style={styles.uploadText}>+ Upload business permit</Text>
+        {permitUrl ? (
+          <View style={styles.uploadedRow}>
+            <Image
+              accessibilityLabel="Uploaded business permit preview"
+              source={{ uri: permitUrl }}
+              style={styles.thumbnail}
+            />
+            <Text style={styles.uploadedText}>Tap to replace</Text>
+          </View>
+        ) : (
+          <View style={styles.uploadPrompt}>
+            <Ionicons
+              name="cloud-upload-outline"
+              size={22}
+              color={Colors.textMuted}
+            />
+            <Text style={styles.uploadText}>
+              {uploading ? "Uploading…" : "Upload business permit"}
+            </Text>
+          </View>
+        )}
       </TouchableOpacity>
 
-      <PrimaryButton label={loading ? 'Saving...' : 'Save and Continue'} onPress={handleSave} loading={loading} />
+      <PrimaryButton
+        label={loading ? "Saving..." : "Save and Continue"}
+        onPress={handleSave}
+        loading={loading}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: Colors.background, padding: 24, paddingTop: 60 },
-  title: { fontSize: 20, fontWeight: 'bold', textAlign: 'center', marginBottom: 4 },
-  subtitle: { fontSize: 12, color: Colors.textMuted, textAlign: 'center', marginBottom: 24 },
+  container: {
+    flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
+    backgroundColor: Colors.background,
+    padding: Spacing.xxl,
+    paddingTop: 60,
+  },
+  title: {
+    fontSize: Typography.xl,
+    fontWeight: "bold",
+    color: Colors.text,
+    textAlign: "center",
+    marginBottom: Spacing.xs,
+  },
+  subtitle: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    textAlign: "center",
+    marginBottom: Spacing.xxl,
+  },
   uploadBox: {
     borderWidth: 1,
     borderColor: Colors.textMuted,
-    borderStyle: 'dashed',
+    borderStyle: "dashed",
     borderRadius: Radius.sm,
-    padding: 24,
-    alignItems: 'center',
-    marginBottom: 20,
+    padding: Spacing.xxl,
+    alignItems: "center",
+    marginBottom: Spacing.xl,
   },
-  uploadText: { color: Colors.textMuted, fontSize: 12 },
+  uploadPrompt: { alignItems: "center", gap: Spacing.xs },
+  uploadText: { color: Colors.textMuted, fontSize: Typography.sm },
+  uploadedRow: { alignItems: "center" },
+  thumbnail: {
+    width: 80,
+    height: 80,
+    borderRadius: Radius.sm,
+    marginBottom: Spacing.sm,
+  },
+  uploadedText: {
+    color: Colors.info,
+    fontSize: Typography.sm,
+    fontWeight: "600",
+  },
 });

@@ -3,30 +3,57 @@
 // The same dark button (Log in, Pay, Continue, Save...) was being redefined
 // on every screen. This is that button, written once.
 
-import { TouchableOpacity, Text, StyleSheet, ActivityIndicator, GestureResponderEvent } from 'react-native';
-import { Colors, Radius } from '@/constants/theme';
+import { Colors, Radius, Shadow, Typography } from "@/constants/theme";
+import {
+  ActivityIndicator,
+  GestureResponderEvent,
+  Pressable,
+  StyleSheet,
+  Text,
+} from "react-native";
 
 type Props = {
   label: string;
   onPress: (e: GestureResponderEvent) => void;
   loading?: boolean;
   disabled?: boolean;
-  variant?: 'primary' | 'secondary';
+  variant?: "primary" | "secondary";
 };
 
-export function PrimaryButton({ label, onPress, loading, disabled, variant = 'primary' }: Props) {
+export function PrimaryButton({
+  label,
+  onPress,
+  loading,
+  disabled,
+  variant = "primary",
+}: Props) {
+  const isSecondary = variant === "secondary";
+  const inactive = !!(disabled || loading);
+
   return (
-    <TouchableOpacity
-      style={[styles.button, variant === 'secondary' && styles.secondary]}
+    <Pressable
       onPress={onPress}
-      disabled={disabled || loading}
+      disabled={inactive}
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      accessibilityState={{ disabled: inactive, busy: !!loading }}
+      style={({ pressed }) => [
+        styles.button,
+        isSecondary ? styles.secondary : Shadow.sm,
+        // Dim only a genuinely disabled button; while loading the spinner
+        // is the feedback and the button should stay legible.
+        disabled && !loading && styles.disabled,
+        pressed && !inactive && styles.pressed,
+      ]}
     >
       {loading ? (
-        <ActivityIndicator color={variant === 'secondary' ? Colors.text : Colors.white} />
+        <ActivityIndicator color={isSecondary ? Colors.text : Colors.white} />
       ) : (
-        <Text style={[styles.text, variant === 'secondary' && styles.secondaryText]}>{label}</Text>
+        <Text style={[styles.text, isSecondary && styles.secondaryText]}>
+          {label}
+        </Text>
       )}
-    </TouchableOpacity>
+    </Pressable>
   );
 }
 
@@ -35,15 +62,24 @@ const styles = StyleSheet.create({
     backgroundColor: Colors.text,
     borderRadius: Radius.sm,
     padding: 14,
-    alignItems: 'center',
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   secondary: {
     backgroundColor: Colors.borderLight,
   },
+  disabled: {
+    opacity: 0.5,
+  },
+  pressed: {
+    opacity: 0.85,
+    transform: [{ scale: 0.98 }],
+  },
   text: {
     color: Colors.white,
-    fontSize: 15,
-    fontWeight: '600',
+    fontSize: Typography.md,
+    fontWeight: "600",
   },
   secondaryText: {
     color: Colors.text,

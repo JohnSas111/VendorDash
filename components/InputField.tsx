@@ -1,14 +1,22 @@
 // components/InputField.tsx
 
-import { TextInput, StyleSheet, TextInputProps } from 'react-native';
-import { Colors, Radius } from '@/constants/theme';
+import { Colors, Radius } from "@/constants/theme";
+import { StyleSheet, TextInput, TextInputProps } from "react-native";
 
-export function InputField(props: TextInputProps & { multiline?: boolean }) {
+export function InputField({
+  style,
+  multiline,
+  ...rest
+}: TextInputProps & { multiline?: boolean }) {
   return (
     <TextInput
-      style={[styles.input, props.multiline && styles.multiline]}
       placeholderTextColor={Colors.textMuted}
-      {...props}
+      accessibilityLabel={rest.accessibilityLabel ?? rest.placeholder}
+      multiline={multiline}
+      {...rest}
+      // Merged after the spread so a caller's `style` adds to the base look
+      // instead of replacing it.
+      style={[styles.input, multiline && styles.multiline, style]}
     />
   );
 }
@@ -25,6 +33,6 @@ const styles = StyleSheet.create({
   },
   multiline: {
     height: 80,
-    textAlignVertical: 'top',
+    textAlignVertical: "top",
   },
 });

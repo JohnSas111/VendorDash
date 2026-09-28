@@ -1,10 +1,11 @@
 import { InputField } from "@/components/InputField";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors } from "@/constants/theme";
+import { Colors, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
 import { router } from "expo-router";
 import { useState } from "react";
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 export default function SignupScreen() {
   const [fullName, setFullName] = useState("");
@@ -13,14 +14,18 @@ export default function SignupScreen() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const { showToast } = useToast();
 
   async function handleSignup() {
     if (!fullName || !businessName || !email || !password || !confirmPassword) {
-      Alert.alert("Missing info", "Please fill in every field.");
+      showToast("Please fill in every field.", "error");
       return;
     }
     if (password !== confirmPassword) {
-      Alert.alert("Passwords don't match", "Please re-enter your password.");
+      showToast(
+        "Passwords don’t match. Please re-enter your password.",
+        "error",
+      );
       return;
     }
 
@@ -32,17 +37,14 @@ export default function SignupScreen() {
     });
     if (authError) {
       setLoading(false);
-      Alert.alert("Sign up failed", authError.message);
+      showToast(authError.message || "Sign up failed.", "error");
       return;
     }
 
     const userId = authData.user?.id;
     if (!userId) {
       setLoading(false);
-      Alert.alert(
-        "Sign up failed",
-        "Could not create account. Please try again.",
-      );
+      showToast("Could not create account. Please try again.", "error");
       return;
     }
 
@@ -53,7 +55,7 @@ export default function SignupScreen() {
     });
     if (profileError) {
       setLoading(false);
-      Alert.alert("Profile setup failed", profileError.message);
+      showToast(profileError.message || "Profile setup failed.", "error");
       return;
     }
 
@@ -67,7 +69,7 @@ export default function SignupScreen() {
     setLoading(false);
 
     if (vendorError) {
-      Alert.alert("Business info failed", vendorError.message);
+      showToast(vendorError.message || "Business info failed.", "error");
       return;
     }
 
@@ -116,7 +118,10 @@ export default function SignupScreen() {
 
       <View style={styles.linkRow}>
         <Text style={styles.linkText}>Already have an account? </Text>
-        <TouchableOpacity onPress={() => router.push("/(auth)/login")}>
+        <TouchableOpacity
+          accessibilityRole="link"
+          onPress={() => router.push("/(auth)/login")}
+        >
           <Text style={styles.link}>Sign in</Text>
         </TouchableOpacity>
       </View>
@@ -127,17 +132,27 @@ export default function SignupScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
     backgroundColor: Colors.background,
-    padding: 24,
+    padding: Spacing.xxl,
     paddingTop: 60,
   },
   title: {
-    fontSize: 20,
+    fontSize: Typography.xl,
     fontWeight: "bold",
-    marginBottom: 24,
+    color: Colors.text,
+    marginBottom: Spacing.xxl,
     textAlign: "center",
   },
-  linkRow: { flexDirection: "row", justifyContent: "center", marginTop: 16 },
-  linkText: { fontSize: 12, fontWeight: "600" },
-  link: { fontSize: 12, fontWeight: "600", color: Colors.info },
+  linkRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: Spacing.lg,
+    minHeight: 44,
+  },
+  linkText: { fontSize: Typography.sm, fontWeight: "600", color: Colors.text },
+  link: { fontSize: Typography.sm, fontWeight: "600", color: Colors.info },
 });

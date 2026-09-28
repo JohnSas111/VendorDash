@@ -1,11 +1,13 @@
+import { ConfirmModal } from "@/components/ConfirmModal";
+import { PrimaryButton } from "@/components/PrimaryButton";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Colors, Radius } from "@/constants/theme";
-import { confirmAsync, notify } from "@/lib/confirmDialog";
+import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   StyleSheet,
@@ -29,24 +31,39 @@ type BookingDetail = {
 
 export default function BookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
+  const { showToast } = useToast();
+
   const [booking, setBooking] = useState<BookingDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [savingRecurring, setSavingRecurring] = useState(false);
   const [requestingRefund, setRequestingRefund] = useState(false);
   const [refundModalOpen, setRefundModalOpen] = useState(false);
   const [refundReason, setRefundReason] = useState("");
   const [cancelling, setCancelling] = useState(false);
+  const [cancelConfirmVisible, setCancelConfirmVisible] = useState(false);
 
   useEffect(() => {
     async function load() {
       if (!bookingId) return;
-      const { data } = await supabase
+      setLoadError(null);
+      const { data, error } = await supabase
         .from("bookings")
         .select(
           "id, status, attending_days, is_recurring, refund_requested, refund_reason, stalls(stall_number, price_per_day_cents), market_sessions(friday_date, sunday_date)",
         )
         .eq("id", bookingId)
         .single();
+
+      // BUGFIX: this fetch never checked `error` at all — on failure,
+      // `booking` stayed null, and since the render below returns the
+      // loading spinner whenever `!booking`, the screen showed an
+      // infinite spinner instead of an error state.
+      if (error || !data) {
+        setLoadError("Couldn't load this booking.");
+        setLoading(false);
+        return;
+      }
       setBooking(data as unknown as BookingDetail);
       setLoading(false);
     }
@@ -71,7 +88,10 @@ export default function BookingDetailScreen() {
 
     if (error || !data?.success) {
       setBooking({ ...booking, is_recurring: !next });
-      notify("Could not update", error?.message ?? "Please try again.");
+      showToast(
+        error?.message ?? "Couldn't update that. Please try again.",
+        "error",
+      );
     }
   }
 
@@ -84,9 +104,9 @@ export default function BookingDetailScreen() {
     if (!booking) return;
 
     if (refundReason.trim().length < 3) {
-      notify(
-        "Tell us why",
-        "Please add a short reason so the organizer knows what happened.",
+      showToast(
+        "Add a short reason so the organizer knows what happened.",
+        "error",
       );
       return;
     }
@@ -100,13 +120,13 @@ export default function BookingDetailScreen() {
     setRequestingRefund(false);
 
     if (error) {
-      notify("Couldn't send request", error.message);
+      showToast(error.message, "error");
       return;
     }
     if (!updated || updated.length === 0) {
-      notify(
-        "Couldn't send request",
-        "The update didn't go through — this usually means a permissions rule is blocking it. Nothing was saved.",
+      showToast(
+        "That didn't go through — a permissions rule likely blocked it. Nothing was saved.",
+        "error",
       );
       return;
     }
@@ -117,20 +137,19 @@ export default function BookingDetailScreen() {
       refund_reason: refundReason.trim(),
     });
     setRefundModalOpen(false);
-    notify(
-      "Refund requested",
-      "The organizer has been notified and will process it manually.",
+    showToast(
+      "Refund requested — the organizer will process it manually.",
+      "success",
     );
   }
 
-  async function handleCancelReservation() {
-    if (!booking) return;
+  function handleCancelReservation() {
+    setCancelConfirmVisible(true);
+  }
 
-    const confirmed = await confirmAsync(
-      "Cancel this reservation?",
-      "This frees up the stall for someone else. You haven't paid yet, so there's nothing to refund.",
-    );
-    if (!confirmed) return;
+  async function confirmCancelReservation() {
+    if (!booking) return;
+    setCancelConfirmVisible(false);
 
     setCancelling(true);
     const { data: updated, error } = await supabase
@@ -141,23 +160,26 @@ export default function BookingDetailScreen() {
     setCancelling(false);
 
     if (error) {
-      notify("Couldn't cancel", error.message);
+      showToast(error.message, "error");
       return;
     }
     if (!updated || updated.length === 0) {
-      notify(
-        "Couldn't cancel",
-        "The update didn't go through — this usually means a permissions rule is blocking it. Nothing was saved.",
+      showToast(
+        "That didn't go through — a permissions rule likely blocked it. Nothing was saved.",
+        "error",
       );
       return;
     }
 
-    notify("Reservation cancelled", "The stall is now available again.");
+    showToast(
+      "Reservation cancelled — the stall is available again.",
+      "success",
+    );
     router.back();
   }
 
-  // NEW: takes the vendor from "approved" straight into Payment, now
-  // that reserving no longer goes there automatically.
+  // Takes the vendor from "approved" straight into Payment, now that
+  // reserving no longer goes there automatically.
   function handleContinueToPayment() {
     if (!booking || !booking.stalls) return;
     const amountCents =
@@ -171,10 +193,28 @@ export default function BookingDetailScreen() {
     });
   }
 
-  if (loading || !booking) {
+  if (loading) {
     return (
       <View style={styles.container}>
-        <ActivityIndicator />
+        <BookingDetailSkeleton />
+      </View>
+    );
+  }
+
+  if (loadError || !booking) {
+    return (
+      <View style={[styles.container, styles.centerFill]}>
+        <Ionicons name="alert-circle-outline" size={28} color={Colors.booked} />
+        <Text style={styles.errorText}>
+          {loadError ?? "Booking not found."}
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.back()}
+          style={styles.backLink}
+        >
+          <Text style={styles.backLinkText}>Go back</Text>
+        </Pressable>
       </View>
     );
   }
@@ -204,14 +244,14 @@ export default function BookingDetailScreen() {
         <StatusBadge status={booking.status} />
       </View>
 
-      {/* NEW: three-way status card, replacing the old paid/not-paid
-          split — pending vs approved now need genuinely different
-          messaging and actions, not just "no QR yet." */}
+      {/* Three-way status card — pending vs approved need genuinely
+          different messaging and actions, not just "no QR yet." */}
       {booking.status === "pending" && (
         <View style={styles.pendingCard}>
+          <Ionicons name="time-outline" size={20} color={Colors.textMuted} />
           <Text style={styles.pendingText}>
-            Waiting on the organizer to approve this reservation. You'll be
-            notified once they do — you'll then have 15 minutes to pay before it
+            Waiting on the organizer to approve this reservation. You’ll be
+            notified once they do — you’ll then have 15 minutes to pay before it
             expires.
           </Text>
         </View>
@@ -219,12 +259,18 @@ export default function BookingDetailScreen() {
 
       {booking.status === "approved" && (
         <View style={styles.approvedCard}>
+          <Ionicons
+            name="checkmark-circle"
+            size={22}
+            color={Colors.available}
+          />
           <Text style={styles.approvedText}>
-            You're approved! Pay now to lock in this stall.
+            You’re approved! Pay now to lock in this stall.
           </Text>
-          <Pressable style={styles.payButton} onPress={handleContinueToPayment}>
-            <Text style={styles.payButtonText}>Continue to payment</Text>
-          </Pressable>
+          <PrimaryButton
+            label="Continue to payment"
+            onPress={handleContinueToPayment}
+          />
         </View>
       )}
 
@@ -272,6 +318,7 @@ export default function BookingDetailScreen() {
 
       {(booking.status === "pending" || booking.status === "approved") && (
         <Pressable
+          accessibilityRole="button"
           onPress={handleCancelReservation}
           disabled={cancelling}
           style={styles.cancelButton}
@@ -290,6 +337,7 @@ export default function BookingDetailScreen() {
             </Text>
           ) : (
             <Pressable
+              accessibilityRole="button"
               onPress={handleRequestRefund}
               style={styles.refundButton}
             >
@@ -310,10 +358,11 @@ export default function BookingDetailScreen() {
             <Text style={styles.modalTitle}>Request a refund</Text>
             <Text style={styles.modalHint}>
               The organizer will review this and process your refund manually —
-              this doesn't cancel your stall automatically.
+              this doesn’t cancel your stall automatically.
             </Text>
             <Text style={styles.modalLabel}>Reason</Text>
             <TextInput
+              accessibilityLabel="Refund reason"
               style={styles.modalInput}
               value={refundReason}
               onChangeText={setRefundReason}
@@ -322,26 +371,72 @@ export default function BookingDetailScreen() {
               numberOfLines={3}
             />
             <View style={styles.modalActions}>
-              <Pressable
-                style={styles.modalCancelButton}
-                onPress={() => setRefundModalOpen(false)}
-                disabled={requestingRefund}
-              >
-                <Text style={styles.modalCancelButtonText}>Cancel</Text>
-              </Pressable>
-              <Pressable
-                style={styles.modalSubmitButton}
-                onPress={submitRefundRequest}
-                disabled={requestingRefund}
-              >
-                <Text style={styles.modalSubmitButtonText}>
-                  {requestingRefund ? "Sending…" : "Submit request"}
-                </Text>
-              </Pressable>
+              <View style={{ flex: 1 }}>
+                <PrimaryButton
+                  label="Cancel"
+                  variant="secondary"
+                  onPress={() => setRefundModalOpen(false)}
+                  disabled={requestingRefund}
+                />
+              </View>
+              <View style={{ flex: 1 }}>
+                <PrimaryButton
+                  label={requestingRefund ? "Sending…" : "Submit request"}
+                  onPress={submitRefundRequest}
+                  disabled={requestingRefund}
+                />
+              </View>
             </View>
           </View>
         </View>
       </Modal>
+
+      <ConfirmModal
+        visible={cancelConfirmVisible}
+        title="Cancel this reservation?"
+        message="This frees up the stall for someone else. You haven't paid yet, so there's nothing to refund."
+        confirmLabel="Cancel reservation"
+        cancelLabel="Keep it"
+        onConfirm={confirmCancelReservation}
+        onDismiss={() => setCancelConfirmVisible(false)}
+      />
+    </View>
+  );
+}
+
+// Placeholder shown while the booking is loading.
+function BookingDetailSkeleton() {
+  return (
+    <View style={{ width: "100%", alignItems: "center" }}>
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: 140, height: 20, marginTop: Spacing.md },
+        ]}
+      />
+      <View
+        style={[styles.skeletonLine, { width: 90, marginTop: Spacing.sm }]}
+      />
+      <View
+        style={[
+          styles.skeletonLine,
+          {
+            width: 70,
+            height: 20,
+            borderRadius: 10,
+            marginTop: Spacing.md,
+            marginBottom: Spacing.xxl,
+          },
+        ]}
+      />
+      <View style={[styles.qrCard, styles.skeletonBlock, { height: 260 }]} />
+      <View
+        style={[
+          styles.infoCard,
+          styles.skeletonBlock,
+          { height: 56, marginTop: Spacing.lg },
+        ]}
+      />
     </View>
   );
 }
@@ -349,37 +444,56 @@ export default function BookingDetailScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
     backgroundColor: Colors.background,
-    padding: 24,
-    paddingTop: 20,
+    padding: Spacing.xxl,
+    paddingTop: Spacing.xl,
     alignItems: "center",
   },
-  title: { fontSize: 20, fontWeight: "bold" },
-  subtitle: { fontSize: 13, color: Colors.textMuted, marginTop: 2 },
-  badgeWrap: { marginTop: 10, marginBottom: 24 },
+  centerFill: { justifyContent: "center", gap: Spacing.sm },
+  errorText: {
+    fontSize: Typography.md,
+    color: Colors.textMuted,
+    textAlign: "center",
+  },
+  backLink: { marginTop: Spacing.sm, minHeight: 44, justifyContent: "center" },
+  backLinkText: {
+    color: Colors.text,
+    fontWeight: "600",
+    fontSize: Typography.base,
+  },
+  title: { fontSize: Typography.xl, fontWeight: "bold", color: Colors.text },
+  subtitle: { fontSize: Typography.sm, color: Colors.textMuted, marginTop: 2 },
+  badgeWrap: { marginTop: Spacing.sm, marginBottom: Spacing.xxl },
   qrCard: {
     backgroundColor: Colors.white,
     borderRadius: Radius.md,
-    padding: 24,
+    padding: Spacing.xxl,
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: Spacing.xl,
+    ...Shadow.sm,
   },
   qrDimmed: { opacity: 0.4 },
   qrHint: {
-    fontSize: 11,
+    fontSize: Typography.xs,
     color: Colors.textMuted,
-    marginTop: 12,
+    marginTop: Spacing.md,
     textAlign: "center",
   },
   pendingCard: {
     backgroundColor: Colors.white,
     borderRadius: Radius.md,
-    padding: 20,
-    marginBottom: 20,
+    padding: Spacing.xl,
+    marginBottom: Spacing.xl,
     width: "100%",
+    alignItems: "center",
+    gap: Spacing.sm,
+    ...Shadow.sm,
   },
   pendingText: {
-    fontSize: 13,
+    fontSize: Typography.base,
     color: Colors.textMuted,
     textAlign: "center",
     lineHeight: 19,
@@ -387,61 +501,76 @@ const styles = StyleSheet.create({
   approvedCard: {
     backgroundColor: Colors.white,
     borderRadius: Radius.md,
-    padding: 20,
-    marginBottom: 20,
+    padding: Spacing.xl,
+    marginBottom: Spacing.xl,
     width: "100%",
     alignItems: "center",
     borderWidth: 1,
     borderColor: Colors.available,
+    gap: Spacing.md,
+    ...Shadow.sm,
   },
   approvedText: {
-    fontSize: 14,
+    fontSize: Typography.md,
     fontWeight: "600",
-    marginBottom: 14,
+    color: Colors.text,
     textAlign: "center",
   },
-  payButton: {
-    backgroundColor: Colors.available,
-    borderRadius: Radius.sm,
-    paddingVertical: 14,
-    width: "100%",
-    alignItems: "center",
-  },
-  payButtonText: { color: Colors.white, fontWeight: "700", fontSize: 14 },
   infoCard: {
     backgroundColor: Colors.white,
     borderRadius: Radius.md,
-    padding: 14,
+    padding: Spacing.md,
     width: "100%",
+    ...Shadow.sm,
   },
-  infoLabel: { fontSize: 11, color: Colors.textMuted },
-  infoValue: { fontSize: 14, fontWeight: "500", marginTop: 2 },
+  infoLabel: { fontSize: Typography.xs, color: Colors.textMuted },
+  infoValue: {
+    fontSize: Typography.md,
+    fontWeight: "500",
+    color: Colors.text,
+    marginTop: 2,
+  },
   recurringCard: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: Colors.white,
     borderRadius: Radius.md,
-    padding: 14,
+    padding: Spacing.md,
     width: "100%",
-    marginTop: 12,
+    marginTop: Spacing.md,
+    ...Shadow.sm,
   },
-  recurringTextWrap: { flex: 1, marginRight: 12 },
-  recurringLabel: { fontSize: 13, fontWeight: "500" },
-  recurringHint: { fontSize: 11, color: Colors.textMuted, marginTop: 2 },
-  refundCard: { width: "100%", marginTop: 12, alignItems: "center" },
+  recurringTextWrap: { flex: 1, marginRight: Spacing.md },
+  recurringLabel: {
+    fontSize: Typography.base,
+    fontWeight: "500",
+    color: Colors.text,
+  },
+  recurringHint: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
+  refundCard: { width: "100%", marginTop: Spacing.md, alignItems: "center" },
   refundButton: {
     borderWidth: 1,
     borderColor: Colors.booked,
     borderRadius: Radius.sm,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
     width: "100%",
     alignItems: "center",
+    minHeight: 44,
+    justifyContent: "center",
   },
-  refundButtonText: { color: Colors.booked, fontWeight: "600", fontSize: 13 },
+  refundButtonText: {
+    color: Colors.booked,
+    fontWeight: "600",
+    fontSize: Typography.base,
+  },
   refundPendingText: {
-    fontSize: 12,
+    fontSize: Typography.sm,
     color: Colors.textMuted,
     textAlign: "center",
   },
@@ -449,78 +578,67 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.textMuted,
     borderRadius: Radius.sm,
-    paddingVertical: 12,
-    paddingHorizontal: 20,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.xl,
     width: "100%",
     alignItems: "center",
-    marginTop: 12,
+    marginTop: Spacing.md,
+    minHeight: 44,
+    justifyContent: "center",
   },
   cancelButtonText: {
     color: Colors.textMuted,
     fontWeight: "600",
-    fontSize: 13,
+    fontSize: Typography.base,
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.4)",
+    backgroundColor: Colors.overlay,
     alignItems: "center",
     justifyContent: "center",
-    padding: 20,
+    padding: Spacing.xl,
   },
   modalCard: {
     width: "100%",
     maxWidth: 420,
     backgroundColor: Colors.white,
     borderRadius: Radius.md,
-    padding: 20,
+    padding: Spacing.xl,
+    ...Shadow.md,
   },
-  modalTitle: { fontSize: 17, fontWeight: "700", marginBottom: 6 },
+  modalTitle: {
+    fontSize: Typography.lg,
+    fontWeight: "700",
+    color: Colors.text,
+    marginBottom: Spacing.xs,
+  },
   modalHint: {
-    fontSize: 12,
+    fontSize: Typography.sm,
     color: Colors.textMuted,
-    marginBottom: 16,
+    marginBottom: Spacing.lg,
     lineHeight: 17,
   },
   modalLabel: {
-    fontSize: 12,
+    fontSize: Typography.sm,
     fontWeight: "600",
     color: Colors.textMuted,
-    marginBottom: 6,
+    marginBottom: Spacing.xs,
   },
   modalInput: {
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.sm,
-    padding: 12,
-    fontSize: 14,
+    padding: Spacing.md,
+    fontSize: Typography.md,
     minHeight: 80,
     textAlignVertical: "top",
-    marginBottom: 16,
+    marginBottom: Spacing.lg,
   },
-  modalActions: { flexDirection: "row", gap: 10 },
-  modalCancelButton: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 12,
-    borderRadius: Radius.sm,
-    borderWidth: 1,
-    borderColor: Colors.border,
-  },
-  modalCancelButtonText: {
-    fontWeight: "600",
-    fontSize: 13,
-    color: Colors.text,
-  },
-  modalSubmitButton: {
-    flex: 1,
-    alignItems: "center",
-    paddingVertical: 12,
-    borderRadius: Radius.sm,
-    backgroundColor: Colors.text,
-  },
-  modalSubmitButtonText: {
-    fontWeight: "600",
-    fontSize: 13,
-    color: Colors.white,
+  modalActions: { flexDirection: "row", gap: Spacing.sm },
+  skeletonBlock: { backgroundColor: Colors.borderLight, shadowOpacity: 0 },
+  skeletonLine: {
+    height: 10,
+    borderRadius: Radius.xs,
+    backgroundColor: Colors.borderLight,
   },
 });

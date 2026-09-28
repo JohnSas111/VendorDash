@@ -10,7 +10,7 @@
 // only the hex values behind those names changed. Spacing/Radius also
 // now come from constants/theme.ts.
 
-import { Colors, Radius } from "@/constants/theme";
+import { Colors, Radius, Shadow } from "@/constants/theme";
 import { StyleSheet } from "react-native";
 
 export const COLORS = {
@@ -20,6 +20,11 @@ export const COLORS = {
   amber: Colors.reserved, // was '#E8983A'
   teal: Colors.available, // was '#1F6E63'
   clay: Colors.booked, // was '#C1502E'
+  // Text-safe variants: use these (not teal/clay/amber) for text on light
+  // backgrounds; teal/clay/amber stay for fills, borders and icons.
+  tealText: Colors.availableText,
+  clayText: Colors.dangerText,
+  amberText: Colors.warningText,
   slate: Colors.textMuted, // was '#5B6072'
   border: Colors.border, // was '#E7E3D8'
 };
@@ -55,13 +60,14 @@ export const shared = StyleSheet.create({
     marginBottom: 4,
   },
   subtitle: { fontSize: 15, color: COLORS.slate, marginBottom: 16 },
-  errorText: { color: COLORS.clay, fontSize: 14 },
+  errorText: { color: COLORS.clayText, fontSize: 14 },
   card: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.border,
     padding: 16,
+    ...Shadow.sm,
   },
   row: {
     backgroundColor: COLORS.white,
@@ -70,6 +76,7 @@ export const shared = StyleSheet.create({
     borderColor: COLORS.border,
     padding: 14,
     gap: 10,
+    ...Shadow.sm,
   },
   rowDesktop: {
     flexDirection: "row",
@@ -94,6 +101,7 @@ export const shared = StyleSheet.create({
     borderColor: COLORS.border,
     padding: 20,
     alignItems: "center",
+    ...Shadow.sm,
   },
   emptyStateText: { color: COLORS.slate, fontSize: 14 },
   primaryButton: {
@@ -101,6 +109,9 @@ export const shared = StyleSheet.create({
     borderRadius: RADIUS.sm,
     paddingVertical: 10,
     paddingHorizontal: 18,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   primaryButtonText: { color: COLORS.white, fontWeight: "600", fontSize: 14 },
   secondaryButton: {
@@ -110,6 +121,9 @@ export const shared = StyleSheet.create({
     borderRadius: RADIUS.sm,
     paddingVertical: 10,
     paddingHorizontal: 18,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   secondaryButtonText: {
     color: COLORS.inkNavy,
@@ -123,9 +137,12 @@ export const shared = StyleSheet.create({
     borderRadius: RADIUS.sm,
     paddingVertical: 8,
     paddingHorizontal: 16,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   dangerOutlineButtonText: {
-    color: COLORS.clay,
+    color: COLORS.clayText,
     fontWeight: "600",
     fontSize: 13,
   },
@@ -134,8 +151,11 @@ export const shared = StyleSheet.create({
     borderRadius: RADIUS.sm,
     paddingVertical: 8,
     paddingHorizontal: 16,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  successButtonText: { color: COLORS.white, fontWeight: "600", fontSize: 13 },
+  successButtonText: { color: COLORS.inkNavy, fontWeight: "600", fontSize: 13 },
   input: {
     borderWidth: 1,
     borderColor: COLORS.border,
@@ -190,16 +210,16 @@ export function statusColors(status: string): { bg: string; fg: string } {
     case "open":
     case "available":
     case "verified":
-      return { bg: "#E3F5EC", fg: COLORS.teal };
+      return { bg: Colors.successLight, fg: COLORS.tealText };
     case "rejected":
     case "cancelled":
     case "failed":
     case "unverified":
-      return { bg: "#FBEAE8", fg: COLORS.clay };
+      return { bg: Colors.dangerLight, fg: COLORS.clayText };
     case "pending":
     case "processing":
     case "upcoming":
-      return { bg: "#FDF1DF", fg: COLORS.amber };
+      return { bg: Colors.warningLight, fg: COLORS.amberText };
     default:
       return { bg: COLORS.border, fg: COLORS.slate };
   }
@@ -217,18 +237,27 @@ export type StallDisplayStatus =
 
 export function stallStatusColors(status: StallDisplayStatus): {
   bg: string;
-  fg: string;
+  fg: string; // border + icon
+  text: string; // label text (AA contrast)
 } {
   switch (status) {
     case "available":
-      return { bg: "#E3F5EC", fg: COLORS.teal };
+      return {
+        bg: Colors.successLight,
+        fg: COLORS.teal,
+        text: COLORS.tealText,
+      };
     case "reserved":
-      return { bg: "#FDF1DF", fg: COLORS.amber };
+      return {
+        bg: Colors.warningLight,
+        fg: COLORS.amber,
+        text: COLORS.amberText,
+      };
     case "booked":
-      return { bg: "#FBEAE8", fg: COLORS.clay };
+      return { bg: Colors.dangerLight, fg: COLORS.clay, text: COLORS.clayText };
     case "inactive":
     default:
-      return { bg: COLORS.border, fg: COLORS.slate };
+      return { bg: COLORS.border, fg: COLORS.slate, text: COLORS.slate };
   }
 }
 

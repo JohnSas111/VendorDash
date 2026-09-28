@@ -1,19 +1,13 @@
 import { InputField } from "@/components/InputField";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius } from "@/constants/theme";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
 import { pickAndUploadImage } from "@/lib/upload";
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import {
-  ActivityIndicator,
-  Alert,
-  Image,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 export default function SalesSubmissionScreen() {
   const { bookingId, stallNumber, dateLabel } = useLocalSearchParams<{
@@ -21,6 +15,7 @@ export default function SalesSubmissionScreen() {
     stallNumber?: string;
     dateLabel?: string;
   }>();
+  const { showToast } = useToast();
 
   const [checkingExisting, setCheckingExisting] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -32,21 +27,29 @@ export default function SalesSubmissionScreen() {
   const [uploading, setUploading] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  // FIX: was possible to submit sales more than once for the same
-  // booking, silently double-counting totals in the organizer's Sales
-  // Reports. Now checks for an existing submission first and, if
-  // found, pre-fills the form and switches to update mode.
+  // FIX (pre-existing, unrelated to this pass): was possible to submit
+  // sales more than once for the same booking, silently double-counting
+  // totals in the organizer's Sales Reports. Checks for an existing
+  // submission first and, if found, pre-fills the form and switches to
+  // update mode.
   useEffect(() => {
     async function loadExisting() {
       if (!bookingId) {
         setCheckingExisting(false);
         return;
       }
-      const { data } = await supabase
+      const { data, error } = await supabase
         .from("sales_submissions")
         .select("gross_sales_cents, items_sold_count, notes, receipt_photo_url")
         .eq("booking_id", bookingId)
         .maybeSingle();
+
+      // Previously unchecked — a genuine fetch error (vs. simply "no
+      // existing submission yet", which maybeSingle() returns as
+      // data: null with no error) would fail silently.
+      if (error) {
+        showToast("Couldn't check for an existing submission.", "error");
+      }
 
       if (data) {
         setIsEditing(true);
@@ -60,7 +63,7 @@ export default function SalesSubmissionScreen() {
       setCheckingExisting(false);
     }
     loadExisting();
-  }, [bookingId]);
+  }, [bookingId, showToast]);
 
   async function handleUploadReceipt() {
     if (!bookingId) return;
@@ -72,9 +75,9 @@ export default function SalesSubmissionScreen() {
       );
       if (url) setReceiptUrl(url);
     } catch (err) {
-      Alert.alert(
-        "Upload failed",
-        err instanceof Error ? err.message : "Please try again.",
+      showToast(
+        err instanceof Error ? err.message : "Upload failed. Please try again.",
+        "error",
       );
     } finally {
       setUploading(false);
@@ -86,7 +89,7 @@ export default function SalesSubmissionScreen() {
 
     const grossSalesNum = parseFloat(grossSales);
     if (!grossSales || isNaN(grossSalesNum) || grossSalesNum < 0) {
-      Alert.alert("Missing info", "Please enter a valid gross sales amount.");
+      showToast("Enter a valid gross sales amount.", "error");
       return;
     }
 
@@ -117,21 +120,23 @@ export default function SalesSubmissionScreen() {
     setLoading(false);
 
     if (error) {
-      Alert.alert("Submission failed", error.message);
+      showToast(error.message, "error");
       return;
     }
 
-    Alert.alert(
-      isEditing ? "Updated!" : "Thanks!",
-      "Your sales report has been saved.",
+    showToast(
+      isEditing
+        ? "Sales report updated."
+        : "Thanks! Your sales report has been saved.",
+      "success",
     );
     router.back();
   }
 
   if (checkingExisting) {
     return (
-      <View style={[styles.container, { justifyContent: "center" }]}>
-        <ActivityIndicator />
+      <View style={styles.container}>
+        <SubmissionSkeleton />
       </View>
     );
   }
@@ -147,9 +152,12 @@ export default function SalesSubmissionScreen() {
         </Text>
       )}
       {isEditing && (
-        <Text style={styles.editingNote}>
-          You've already submitted for this booking — editing will update it.
-        </Text>
+        <View style={styles.editingNoteRow}>
+          <Ionicons name="information-circle" size={14} color={Colors.info} />
+          <Text style={styles.editingNote}>
+            You’ve already submitted for this booking — editing will update it.
+          </Text>
+        </View>
       )}
 
       <Text style={styles.label}>Gross sales (₱)</Text>
@@ -178,19 +186,31 @@ export default function SalesSubmissionScreen() {
       />
 
       <TouchableOpacity
+        accessibilityRole="button"
         style={styles.uploadBox}
         onPress={handleUploadReceipt}
         disabled={uploading}
       >
         {receiptUrl ? (
           <View style={styles.uploadedRow}>
-            <Image source={{ uri: receiptUrl }} style={styles.thumbnail} />
+            <Image
+              accessibilityLabel="Uploaded receipt preview"
+              source={{ uri: receiptUrl }}
+              style={styles.thumbnail}
+            />
             <Text style={styles.uploadedText}>Tap to replace</Text>
           </View>
         ) : (
-          <Text style={styles.uploadText}>
-            {uploading ? "Uploading..." : "+ Attach receipt photo (optional)"}
-          </Text>
+          <View style={styles.uploadPrompt}>
+            <Ionicons
+              name="receipt-outline"
+              size={22}
+              color={Colors.textMuted}
+            />
+            <Text style={styles.uploadText}>
+              {uploading ? "Uploading…" : "Attach receipt photo (optional)"}
+            </Text>
+          </View>
         )}
       </TouchableOpacity>
 
@@ -203,33 +223,100 @@ export default function SalesSubmissionScreen() {
   );
 }
 
+// Placeholder shown while checking for an existing submission,
+// replacing the old centered ActivityIndicator.
+function SubmissionSkeleton() {
+  return (
+    <View>
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: "55%", height: 18, marginBottom: Spacing.sm },
+        ]}
+      />
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: "35%", marginBottom: Spacing.xl },
+        ]}
+      />
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={styles.skeletonInput} />
+      ))}
+      <View style={[styles.uploadBox, styles.skeletonUpload]} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
     backgroundColor: Colors.background,
-    padding: 24,
-    paddingTop: 20,
+    padding: Spacing.xxl,
+    paddingTop: Spacing.xl,
   },
-  title: { fontSize: 20, fontWeight: "bold", marginBottom: 4 },
-  subtitle: { fontSize: 12, color: Colors.textMuted, marginBottom: 8 },
-  editingNote: { fontSize: 12, color: Colors.info, marginBottom: 16 },
-  label: { fontSize: 12, color: Colors.textMuted, marginBottom: 6 },
+  title: {
+    fontSize: Typography.xl,
+    fontWeight: "bold",
+    color: Colors.text,
+    marginBottom: Spacing.xs,
+  },
+  subtitle: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    marginBottom: Spacing.sm,
+  },
+  editingNoteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.xs,
+    marginBottom: Spacing.lg,
+  },
+  editingNote: { fontSize: Typography.sm, color: Colors.info, flex: 1 },
+  label: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    marginBottom: Spacing.sm,
+  },
   uploadBox: {
     borderWidth: 1,
     borderColor: Colors.textMuted,
     borderStyle: "dashed",
     borderRadius: Radius.sm,
-    padding: 24,
+    padding: Spacing.xxl,
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: Spacing.xl,
   },
-  uploadText: { color: Colors.textMuted, fontSize: 12 },
+  uploadPrompt: { alignItems: "center", gap: Spacing.xs },
+  uploadText: { color: Colors.textMuted, fontSize: Typography.sm },
   uploadedRow: { alignItems: "center" },
   thumbnail: {
     width: 80,
     height: 80,
     borderRadius: Radius.sm,
-    marginBottom: 8,
+    marginBottom: Spacing.sm,
   },
-  uploadedText: { color: Colors.info, fontSize: 12, fontWeight: "600" },
+  uploadedText: {
+    color: Colors.info,
+    fontSize: Typography.sm,
+    fontWeight: "600",
+  },
+  skeletonLine: {
+    height: 10,
+    borderRadius: Radius.xs,
+    backgroundColor: Colors.borderLight,
+  },
+  skeletonInput: {
+    height: 44,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.borderLight,
+    marginBottom: Spacing.md,
+  },
+  skeletonUpload: {
+    backgroundColor: Colors.borderLight,
+    borderColor: Colors.borderLight,
+  },
 });

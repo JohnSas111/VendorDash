@@ -1,19 +1,23 @@
+import { ConfirmModal } from "@/components/ConfirmModal";
+import { PressableButton } from "@/components/PressableButton";
+import { Colors, Spacing, Typography } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
-import { confirmAsync, notify } from "@/lib/confirmDialog";
 import {
   BREAKPOINT,
   COLORS,
   formatDate,
+  RADIUS,
   shared,
   statusColors,
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
+import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   Modal,
-  Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
@@ -55,6 +59,7 @@ export default function SessionScheduleScreen() {
     loading: venueLoading,
     error: venueError,
   } = useOrganizerVenue();
+  const { showToast } = useToast();
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,6 +76,9 @@ export default function SessionScheduleScreen() {
   const [editFridayInput, setEditFridayInput] = useState("");
   const [savingEdit, setSavingEdit] = useState(false);
 
+  // Cancel confirmation
+  const [pendingCancel, setPendingCancel] = useState<Session | null>(null);
+
   const load = useCallback(async () => {
     if (!venue) return;
 
@@ -83,17 +91,23 @@ export default function SessionScheduleScreen() {
       .order("friday_date", { ascending: false });
 
     if (error) {
-      notify("Error", error.message);
+      showToast(error.message, "error");
       setSessions([]);
     } else {
       setSessions(data ?? []);
     }
 
     setLoading(false);
-  }, [venue]);
+  }, [venue, showToast]);
 
   useEffect(() => {
-    load();
+    // Wrapped in a local async function rather than calling load()
+    // directly — calling a useCallback'd function that setStates
+    // straight in the effect body trips react-hooks/set-state-in-effect.
+    async function run() {
+      await load();
+    }
+    run();
   }, [load]);
 
   // ------------------------------------------------------------
@@ -104,7 +118,7 @@ export default function SessionScheduleScreen() {
     if (!venue) return;
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(fridayInput)) {
-      notify("Invalid date", "Enter the Friday date as YYYY-MM-DD.");
+      showToast("Enter the Friday date as YYYY-MM-DD.", "error");
       return;
     }
 
@@ -121,12 +135,12 @@ export default function SessionScheduleScreen() {
       friday.getMonth() !== fm - 1 ||
       friday.getDate() !== fd
     ) {
-      notify("Invalid date", "Please enter a valid calendar date.");
+      showToast("Please enter a valid calendar date.", "error");
       return;
     }
 
     if (friday.getDay() !== 5) {
-      notify("Invalid Friday", "The date you entered is not a Friday.");
+      showToast("The date you entered is not a Friday.", "error");
       return;
     }
 
@@ -145,20 +159,16 @@ export default function SessionScheduleScreen() {
 
     if (duplicateCheckError) {
       setCreating(false);
-
-      notify("Error", duplicateCheckError.message);
-
+      showToast(duplicateCheckError.message, "error");
       return;
     }
 
     if (existing) {
       setCreating(false);
-
-      notify(
-        "Session already exists",
+      showToast(
         `There's already a session starting ${formatDate(fridayISO)}.`,
+        "error",
       );
-
       return;
     }
 
@@ -176,12 +186,12 @@ export default function SessionScheduleScreen() {
     setCreating(false);
 
     if (error || !newSession) {
-      notify("Error", error?.message ?? "Could not create session.");
-
+      showToast(error?.message ?? "Could not create session.", "error");
       return;
     }
 
     setFridayInput("");
+    showToast("Session created.", "success");
 
     await load();
 
@@ -218,7 +228,7 @@ export default function SessionScheduleScreen() {
     if (!editingSession || !venue) return;
 
     if (!/^\d{4}-\d{2}-\d{2}$/.test(editFridayInput)) {
-      notify("Invalid date", "Enter the Friday date as YYYY-MM-DD.");
+      showToast("Enter the Friday date as YYYY-MM-DD.", "error");
       return;
     }
 
@@ -236,13 +246,13 @@ export default function SessionScheduleScreen() {
       friday.getMonth() !== fm - 1 ||
       friday.getDate() !== fd
     ) {
-      notify("Invalid date", "Please enter a valid calendar date.");
+      showToast("Please enter a valid calendar date.", "error");
       return;
     }
 
     // Friday = 5 in JavaScript Date.
     if (friday.getDay() !== 5) {
-      notify("Invalid Friday", "The date you entered is not a Friday.");
+      showToast("The date you entered is not a Friday.", "error");
       return;
     }
 
@@ -260,14 +270,14 @@ export default function SessionScheduleScreen() {
       .maybeSingle();
 
     if (duplicateCheckError) {
-      notify("Error", duplicateCheckError.message);
+      showToast(duplicateCheckError.message, "error");
       return;
     }
 
     if (existing) {
-      notify(
-        "Session already exists",
+      showToast(
         `There's already a session starting ${formatDate(fridayISO)}.`,
+        "error",
       );
       return;
     }
@@ -286,7 +296,7 @@ export default function SessionScheduleScreen() {
     setSavingEdit(false);
 
     if (error) {
-      notify("Error", error.message);
+      showToast(error.message, "error");
       return;
     }
 
@@ -295,7 +305,7 @@ export default function SessionScheduleScreen() {
 
     await load();
 
-    notify("Session updated", "The market session dates have been updated.");
+    showToast("Session dates updated.", "success");
   };
 
   // ------------------------------------------------------------
@@ -315,7 +325,7 @@ export default function SessionScheduleScreen() {
       .eq("id", session.id);
 
     if (error) {
-      notify("Error", error.message);
+      showToast(error.message, "error");
       return;
     }
 
@@ -326,13 +336,14 @@ export default function SessionScheduleScreen() {
   // CANCEL SESSION
   // ------------------------------------------------------------
 
-  const cancelSession = async (session: Session) => {
-    const confirmed = await confirmAsync(
-      "Cancel session",
-      "This marks the session cancelled. Existing bookings are not auto-refunded.",
-    );
+  const requestCancel = (session: Session) => {
+    setPendingCancel(session);
+  };
 
-    if (!confirmed) return;
+  const confirmCancel = async () => {
+    const session = pendingCancel;
+    if (!session) return;
+    setPendingCancel(null);
 
     const { error } = await supabase
       .from("market_sessions")
@@ -342,10 +353,11 @@ export default function SessionScheduleScreen() {
       .eq("id", session.id);
 
     if (error) {
-      notify("Error", error.message);
+      showToast(error.message, "error");
       return;
     }
 
+    showToast("Session cancelled.", "info");
     await load();
   };
 
@@ -355,9 +367,15 @@ export default function SessionScheduleScreen() {
 
   if (venueLoading || loading) {
     return (
-      <View style={shared.centerFill}>
-        <ActivityIndicator color={COLORS.inkNavy} />
-      </View>
+      <ScrollView
+        style={shared.screen}
+        contentContainerStyle={[
+          shared.content,
+          isDesktop && shared.contentDesktop,
+        ]}
+      >
+        <SessionsSkeleton />
+      </ScrollView>
     );
   }
 
@@ -395,6 +413,7 @@ export default function SessionScheduleScreen() {
         <Text style={shared.label}>Friday date (YYYY-MM-DD)</Text>
 
         <TextInput
+          accessibilityLabel="Friday date (YYYY-MM-DD)"
           style={shared.input}
           value={fridayInput}
           onChangeText={setFridayInput}
@@ -403,21 +422,15 @@ export default function SessionScheduleScreen() {
           autoCorrect={false}
         />
 
-        <Pressable
-          style={[
-            shared.primaryButton,
-            {
-              marginTop: 14,
-              alignSelf: "flex-start",
-            },
-          ]}
+        <PressableButton
+          style={[shared.primaryButton, styles.createButton]}
           onPress={createSession}
           disabled={creating}
         >
           <Text style={shared.primaryButtonText}>
             {creating ? "Creating…" : "Create session"}
           </Text>
-        </Pressable>
+        </PressableButton>
       </View>
 
       {/* -------------------------------------------------- */}
@@ -425,24 +438,9 @@ export default function SessionScheduleScreen() {
       {/* -------------------------------------------------- */}
 
       {recurringBanner && (
-        <View
-          style={[
-            shared.card,
-            {
-              marginTop: 12,
-              borderColor: COLORS.amber,
-              backgroundColor: "#FDF1DF",
-            },
-          ]}
-        >
-          <Text
-            style={{
-              color: COLORS.inkNavy,
-              fontSize: 13,
-            }}
-          >
-            {recurringBanner}
-          </Text>
+        <View style={[shared.card, styles.recurringBanner]}>
+          <Ionicons name="repeat" size={16} color={COLORS.amber} />
+          <Text style={styles.recurringBannerText}>{recurringBanner}</Text>
         </View>
       )}
 
@@ -452,15 +450,11 @@ export default function SessionScheduleScreen() {
 
       <Text style={shared.sectionHeading}>All sessions</Text>
 
-      <View style={{ gap: 10 }}>
+      <View style={styles.list}>
         {sessions.length === 0 ? (
-          <View style={shared.card}>
-            <Text
-              style={{
-                color: COLORS.slate,
-                fontSize: 13,
-              }}
-            >
+          <View style={shared.emptyState}>
+            <Ionicons name="calendar-outline" size={26} color={COLORS.slate} />
+            <Text style={[shared.emptyStateText, { marginTop: Spacing.xs }]}>
               No market sessions yet.
             </Text>
           </View>
@@ -486,20 +480,11 @@ export default function SessionScheduleScreen() {
                   <View
                     style={[
                       shared.badge,
-                      {
-                        backgroundColor: bg,
-                        marginTop: 6,
-                      },
+                      styles.statusBadge,
+                      { backgroundColor: bg },
                     ]}
                   >
-                    <Text
-                      style={[
-                        shared.badgeText,
-                        {
-                          color: fg,
-                        },
-                      ]}
-                    >
+                    <Text style={[shared.badgeText, { color: fg }]}>
                       {s.status}
                     </Text>
                   </View>
@@ -507,38 +492,51 @@ export default function SessionScheduleScreen() {
 
                 {/* ACTIONS */}
                 <View
-                  style={{
-                    flexDirection: "row",
-                    gap: 8,
-                    marginTop: isDesktop ? 0 : 10,
-                    alignItems: "center",
-                  }}
+                  style={[
+                    styles.rowActions,
+                    !isDesktop && styles.rowActionsMobile,
+                  ]}
                 >
                   {canEdit && (
-                    <Pressable
-                      style={shared.secondaryButton}
+                    <PressableButton
+                      style={[shared.secondaryButton, styles.actionButton]}
                       onPress={() => openEdit(s)}
                     >
+                      <Ionicons
+                        name="pencil"
+                        size={14}
+                        color={COLORS.inkNavy}
+                      />
                       <Text style={shared.secondaryButtonText}>Edit</Text>
-                    </Pressable>
+                    </PressableButton>
                   )}
 
                   {next && (
-                    <Pressable
-                      style={shared.successButton}
+                    <PressableButton
+                      style={[shared.successButton, styles.actionButton]}
                       onPress={() => advanceStatus(s)}
                     >
+                      <Ionicons
+                        name="arrow-forward-circle"
+                        size={14}
+                        color={COLORS.white}
+                      />
                       <Text style={shared.successButtonText}>Mark {next}</Text>
-                    </Pressable>
+                    </PressableButton>
                   )}
 
                   {s.status !== "cancelled" && s.status !== "completed" && (
-                    <Pressable
-                      style={shared.dangerOutlineButton}
-                      onPress={() => cancelSession(s)}
+                    <PressableButton
+                      style={[shared.dangerOutlineButton, styles.actionButton]}
+                      onPress={() => requestCancel(s)}
                     >
+                      <Ionicons
+                        name="close-circle-outline"
+                        size={14}
+                        color={COLORS.clay}
+                      />
                       <Text style={shared.dangerOutlineButtonText}>Cancel</Text>
-                    </Pressable>
+                    </PressableButton>
                   )}
                 </View>
               </View>
@@ -557,29 +555,14 @@ export default function SessionScheduleScreen() {
         animationType="fade"
         onRequestClose={() => setEditingSession(null)}
       >
-        <View
-          style={{
-            flex: 1,
-            backgroundColor: "rgba(22,25,43,0.4)",
-            alignItems: "center",
-            justifyContent: "center",
-            padding: 20,
-          }}
-        >
-          <View
-            style={[
-              shared.card,
-              {
-                width: "100%",
-                maxWidth: 420,
-              },
-            ]}
-          >
+        <View style={styles.modalBackdrop}>
+          <View style={[shared.card, styles.editCard]}>
             <Text style={shared.rowTitle}>Edit session</Text>
 
             <Text style={shared.label}>Friday date (YYYY-MM-DD)</Text>
 
             <TextInput
+              accessibilityLabel="Friday date (YYYY-MM-DD)"
               style={shared.input}
               value={editFridayInput}
               onChangeText={setEditFridayInput}
@@ -588,58 +571,131 @@ export default function SessionScheduleScreen() {
               autoCorrect={false}
             />
 
-            <Text
-              style={{
-                marginTop: 10,
-                color: COLORS.slate,
-                fontSize: 13,
-              }}
-            >
+            <Text style={styles.editHint}>
               Saturday and Sunday will be calculated automatically.
             </Text>
 
-            <View
-              style={{
-                flexDirection: "row",
-                gap: 10,
-                marginTop: 20,
-              }}
-            >
-              <Pressable
-                style={[
-                  shared.secondaryButton,
-                  {
-                    flex: 1,
-                    alignItems: "center",
-                  },
-                ]}
+            <View style={styles.editActions}>
+              <PressableButton
+                style={[shared.secondaryButton, styles.editActionButton]}
                 onPress={() => {
                   setEditingSession(null);
                   setEditFridayInput("");
                 }}
               >
                 <Text style={shared.secondaryButtonText}>Cancel</Text>
-              </Pressable>
+              </PressableButton>
 
-              <Pressable
-                style={[
-                  shared.primaryButton,
-                  {
-                    flex: 1,
-                    alignItems: "center",
-                  },
-                ]}
+              <PressableButton
+                style={[shared.primaryButton, styles.editActionButton]}
                 onPress={saveEdit}
                 disabled={savingEdit}
               >
                 <Text style={shared.primaryButtonText}>
                   {savingEdit ? "Saving…" : "Save"}
                 </Text>
-              </Pressable>
+              </PressableButton>
             </View>
           </View>
         </View>
       </Modal>
+
+      <ConfirmModal
+        visible={!!pendingCancel}
+        title="Cancel session"
+        message="This marks the session cancelled. Existing bookings are not auto-refunded."
+        confirmLabel="Cancel session"
+        cancelLabel="Go back"
+        onConfirm={confirmCancel}
+        onDismiss={() => setPendingCancel(null)}
+      />
     </ScrollView>
   );
 }
+
+// Placeholder shown while sessions are loading.
+function SessionsSkeleton() {
+  return (
+    <View>
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: 100, height: 22, marginBottom: Spacing.sm },
+        ]}
+      />
+      <View
+        style={[styles.skeletonLine, { width: 220, marginBottom: Spacing.lg }]}
+      />
+      <View
+        style={[
+          shared.card,
+          styles.skeletonBlock,
+          { minHeight: 100, marginBottom: Spacing.lg },
+        ]}
+      />
+      <View
+        style={[styles.skeletonLine, { width: 110, marginBottom: Spacing.sm }]}
+      />
+      <View style={styles.list}>
+        {[0, 1, 2].map((i) => (
+          <View
+            key={i}
+            style={[shared.row, styles.skeletonBlock, { minHeight: 64 }]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  createButton: { marginTop: Spacing.md, alignSelf: "flex-start" },
+  recurringBanner: {
+    marginTop: Spacing.md,
+    borderColor: COLORS.amber,
+    backgroundColor: Colors.warningLight,
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: Spacing.sm,
+  },
+  recurringBannerText: {
+    color: COLORS.inkNavy,
+    fontSize: Typography.base,
+    flex: 1,
+  },
+  list: { gap: Spacing.sm },
+  statusBadge: { marginTop: Spacing.sm },
+  rowActions: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  rowActionsMobile: { marginTop: Spacing.md },
+  actionButton: { flexDirection: "row", alignItems: "center", gap: Spacing.xs },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: Colors.overlay,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: Spacing.xl,
+  },
+  editCard: { width: "100%", maxWidth: 420 },
+  editHint: {
+    marginTop: Spacing.sm,
+    color: COLORS.slate,
+    fontSize: Typography.base,
+  },
+  editActions: { flexDirection: "row", gap: Spacing.sm, marginTop: Spacing.xl },
+  editActionButton: { flex: 1, alignItems: "center" },
+  skeletonBlock: {
+    backgroundColor: COLORS.border,
+    borderColor: COLORS.border,
+    shadowOpacity: 0,
+  },
+  skeletonLine: {
+    height: 12,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.border,
+  },
+});

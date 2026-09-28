@@ -1,5 +1,7 @@
+import { ConfirmModal } from "@/components/ConfirmModal";
+import { PressableButton } from "@/components/PressableButton";
+import { Colors, Spacing, Typography } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
-import { confirmAsync, notify } from "@/lib/confirmDialog";
 import {
   BREAKPOINT,
   COLORS,
@@ -9,12 +11,14 @@ import {
   statusColors,
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
-import React, { useCallback, useEffect, useState } from "react";
+import { useToast } from "@/lib/toast";
+import { Ionicons } from "@expo/vector-icons";
+import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   Modal,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
@@ -37,6 +41,7 @@ export default function StallManagementScreen() {
     loading: venueLoading,
     error: venueError,
   } = useOrganizerVenue();
+  const { showToast } = useToast();
 
   const [stalls, setStalls] = useState<Stall[]>([]);
   const [bookingCounts, setBookingCounts] = useState<Record<string, number>>(
@@ -48,25 +53,32 @@ export default function StallManagementScreen() {
   const [form, setForm] = useState({ stall_number: "", size: "", price: "" });
   const [saving, setSaving] = useState(false);
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [pendingDelete, setPendingDelete] = useState<Stall | null>(null);
 
   const load = useCallback(async () => {
     if (!venue) return;
     setLoading(true);
 
-    const { data } = await supabase
+    const { data, error: stallsError } = await supabase
       .from("stalls")
       .select("id, stall_number, size, price_per_day_cents, is_active")
       .eq("venue_id", venue.id)
       .order("stall_number");
+    if (stallsError) {
+      showToast("Couldn't load stalls.", "error");
+    }
     const stallRows = data ?? [];
     setStalls(stallRows);
 
     const ids = stallRows.map((s) => s.id);
     if (ids.length > 0) {
-      const { data: bookingRows } = await supabase
+      const { data: bookingRows, error: bookingError } = await supabase
         .from("bookings")
         .select("stall_id")
         .in("stall_id", ids);
+      if (bookingError) {
+        showToast("Couldn't load booking history for stalls.", "error");
+      }
       const counts: Record<string, number> = {};
       (bookingRows ?? []).forEach((b: any) => {
         counts[b.stall_id] = (counts[b.stall_id] ?? 0) + 1;
@@ -77,10 +89,16 @@ export default function StallManagementScreen() {
     }
 
     setLoading(false);
-  }, [venue]);
+  }, [venue, showToast]);
 
   useEffect(() => {
-    load();
+    // Wrapped in a local async function rather than calling load()
+    // directly — calling a useCallback'd function that setStates
+    // straight in the effect body trips react-hooks/set-state-in-effect.
+    async function run() {
+      await load();
+    }
+    run();
   }, [load]);
 
   const openAdd = () => {
@@ -103,7 +121,7 @@ export default function StallManagementScreen() {
     if (!venue) return;
     const priceCents = Math.round(parseFloat(form.price || "0") * 100);
     if (!form.stall_number.trim() || Number.isNaN(priceCents)) {
-      notify("Missing info", "Stall number and a valid price are required.");
+      showToast("Stall number and a valid price are required.", "error");
       return;
     }
     setSaving(true);
@@ -116,7 +134,11 @@ export default function StallManagementScreen() {
           price_per_day_cents: priceCents,
         })
         .eq("id", editing.id);
-      if (error) notify("Error", error.message);
+      if (error) {
+        showToast(error.message, "error");
+      } else {
+        showToast("Stall updated.", "success");
+      }
     } else {
       const { error } = await supabase.from("stalls").insert({
         venue_id: venue.id,
@@ -124,7 +146,11 @@ export default function StallManagementScreen() {
         size: form.size.trim() || null,
         price_per_day_cents: priceCents,
       });
-      if (error) notify("Error", error.message);
+      if (error) {
+        showToast(error.message, "error");
+      } else {
+        showToast("Stall added.", "success");
+      }
     }
     setSaving(false);
     setModalOpen(false);
@@ -136,28 +162,42 @@ export default function StallManagementScreen() {
       .from("stalls")
       .update({ is_active: !stall.is_active })
       .eq("id", stall.id);
-    if (error) notify("Error", error.message);
+    if (error) {
+      showToast(error.message, "error");
+    }
     load();
   };
 
-  const deleteStall = async (stall: Stall) => {
+  const requestDelete = (stall: Stall) => {
     setOpenMenuId(null);
-    const confirmed = await confirmAsync(
-      "Delete stall",
-      `Delete stall ${stall.stall_number}? This can't be undone.`,
-    );
-    if (!confirmed) return;
+    setPendingDelete(stall);
+  };
+
+  const confirmDelete = async () => {
+    const stall = pendingDelete;
+    if (!stall) return;
+    setPendingDelete(null);
 
     const { error } = await supabase.from("stalls").delete().eq("id", stall.id);
-    if (error) notify("Error", error.message);
+    if (error) {
+      showToast(error.message, "error");
+    } else {
+      showToast("Stall deleted.", "info");
+    }
     load();
   };
 
   if (venueLoading || loading) {
     return (
-      <View style={shared.centerFill}>
-        <ActivityIndicator color={COLORS.inkNavy} />
-      </View>
+      <ScrollView
+        style={shared.screen}
+        contentContainerStyle={[
+          shared.content,
+          isDesktop && shared.contentDesktop,
+        ]}
+      >
+        <StallsSkeleton />
+      </ScrollView>
     );
   }
   if (venueError) {
@@ -184,130 +224,141 @@ export default function StallManagementScreen() {
           isDesktop && shared.contentDesktop,
         ]}
       >
-        <View
-          style={{
-            flexDirection: "row",
-            justifyContent: "space-between",
-            alignItems: "center",
-          }}
-        >
+        <View style={styles.headerRow}>
           <View>
             <Text style={shared.title}>Stalls</Text>
             <Text style={shared.subtitle}>{stalls.length} total</Text>
           </View>
-          <Pressable style={shared.primaryButton} onPress={openAdd}>
+          <PressableButton style={shared.primaryButton} onPress={openAdd}>
             <Text style={shared.primaryButtonText}>+ Add stall</Text>
-          </Pressable>
+          </PressableButton>
         </View>
 
-        <View style={{ gap: 10, marginTop: 8 }}>
-          {stalls.map((stall) => {
-            const { bg, fg } = statusColors(
-              stall.is_active ? "available" : "unverified",
-            );
-            const hasBookings = (bookingCounts[stall.id] ?? 0) > 0;
-            const menuOpen = openMenuId === stall.id;
-            return (
-              <View
-                key={stall.id}
-                style={[
-                  shared.row,
-                  isDesktop && shared.rowDesktop,
-                  { zIndex: menuOpen ? 20 : 1 },
-                ]}
-              >
-                <View style={{ flex: 1 }}>
-                  <Text style={shared.rowTitle}>
-                    Stall {stall.stall_number}
-                  </Text>
-                  <Text style={shared.rowSubtitle}>
-                    {stall.size ?? "Size not set"} ·{" "}
-                    {formatMoney(stall.price_per_day_cents)}/day
-                  </Text>
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 8,
-                      marginTop: 6,
-                    }}
-                  >
-                    <View style={[shared.badge, { backgroundColor: bg }]}>
-                      <Text style={[shared.badgeText, { color: fg }]}>
-                        {stall.is_active ? "active" : "deactivated"}
-                      </Text>
+        {stalls.length === 0 ? (
+          <View style={[shared.emptyState, styles.emptyState]}>
+            <Ionicons
+              name="storefront-outline"
+              size={26}
+              color={COLORS.slate}
+            />
+            <Text style={[shared.emptyStateText, { marginTop: Spacing.xs }]}>
+              No stalls yet. Add your first one above.
+            </Text>
+          </View>
+        ) : (
+          <View style={styles.list}>
+            {stalls.map((stall) => {
+              const { bg, fg } = statusColors(
+                stall.is_active ? "available" : "unverified",
+              );
+              const hasBookings = (bookingCounts[stall.id] ?? 0) > 0;
+              const menuOpen = openMenuId === stall.id;
+              return (
+                <View
+                  key={stall.id}
+                  style={[
+                    shared.row,
+                    isDesktop && shared.rowDesktop,
+                    { zIndex: menuOpen ? 20 : 1 },
+                  ]}
+                >
+                  <View style={{ flex: 1 }}>
+                    <Text style={shared.rowTitle}>
+                      Stall {stall.stall_number}
+                    </Text>
+                    <Text style={shared.rowSubtitle}>
+                      {stall.size ?? "Size not set"} ·{" "}
+                      {formatMoney(stall.price_per_day_cents)}/day
+                    </Text>
+                    <View style={styles.statusRow}>
+                      <View style={[shared.badge, { backgroundColor: bg }]}>
+                        <Text style={[shared.badgeText, { color: fg }]}>
+                          {stall.is_active ? "active" : "deactivated"}
+                        </Text>
+                      </View>
+                      {hasBookings && (
+                        <Text style={styles.historyText}>
+                          Has booking history
+                        </Text>
+                      )}
                     </View>
-                    {hasBookings && (
-                      <Text style={{ fontSize: 11, color: COLORS.slate }}>
-                        Has booking history
+                  </View>
+
+                  <View
+                    style={[
+                      styles.rowActions,
+                      !isDesktop && styles.rowActionsMobile,
+                    ]}
+                  >
+                    <PressableButton
+                      style={shared.secondaryButton}
+                      onPress={() => openEdit(stall)}
+                    >
+                      <Text style={shared.secondaryButtonText}>Edit</Text>
+                    </PressableButton>
+                    <PressableButton
+                      style={shared.secondaryButton}
+                      onPress={() => toggleActive(stall)}
+                    >
+                      <Text style={shared.secondaryButtonText}>
+                        {stall.is_active ? "Deactivate" : "Reactivate"}
                       </Text>
+                    </PressableButton>
+
+                    {!hasBookings ? (
+                      <View style={{ position: "relative" }}>
+                        <Pressable
+                          style={styles.kebabButton}
+                          hitSlop={{ top: 6, bottom: 6, left: 6, right: 6 }}
+                          accessibilityRole="button"
+                          accessibilityLabel={`More actions for stall ${stall.stall_number}`}
+                          onPress={(e: any) => {
+                            e.stopPropagation?.();
+                            setOpenMenuId(menuOpen ? null : stall.id);
+                          }}
+                        >
+                          <Ionicons
+                            name="ellipsis-vertical"
+                            size={16}
+                            color={COLORS.slate}
+                          />
+                        </Pressable>
+
+                        {menuOpen && (
+                          <View style={styles.menu}>
+                            <Pressable
+                              accessibilityRole="menuitem"
+                              style={styles.menuItem}
+                              onPress={(e: any) => {
+                                e.stopPropagation?.();
+                                requestDelete(stall);
+                              }}
+                            >
+                              <Ionicons
+                                name="trash-outline"
+                                size={14}
+                                color={COLORS.clay}
+                              />
+                              <Text style={styles.menuItemDangerText}>
+                                Delete stall
+                              </Text>
+                            </Pressable>
+                          </View>
+                        )}
+                      </View>
+                    ) : (
+                      // Same footprint as the real kebab button, just
+                      // invisible — keeps every row's button group the
+                      // same total width so right edges line up whether
+                      // or not this stall has a menu to show.
+                      <View style={styles.kebabPlaceholder} />
                     )}
                   </View>
                 </View>
-
-                <View
-                  style={{
-                    flexDirection: "row",
-                    gap: 8,
-                    marginTop: isDesktop ? 0 : 10,
-                    alignItems: "center",
-                  }}
-                >
-                  <Pressable
-                    style={shared.secondaryButton}
-                    onPress={() => openEdit(stall)}
-                  >
-                    <Text style={shared.secondaryButtonText}>Edit</Text>
-                  </Pressable>
-                  <Pressable
-                    style={shared.secondaryButton}
-                    onPress={() => toggleActive(stall)}
-                  >
-                    <Text style={shared.secondaryButtonText}>
-                      {stall.is_active ? "Deactivate" : "Reactivate"}
-                    </Text>
-                  </Pressable>
-
-                  {!hasBookings ? (
-                    <View style={{ position: "relative" }}>
-                      <Pressable
-                        style={styles.kebabButton}
-                        onPress={(e: any) => {
-                          e.stopPropagation?.();
-                          setOpenMenuId(menuOpen ? null : stall.id);
-                        }}
-                      >
-                        <Text style={styles.kebabText}>⋮</Text>
-                      </Pressable>
-
-                      {menuOpen && (
-                        <View style={styles.menu}>
-                          <Pressable
-                            style={styles.menuItem}
-                            onPress={(e: any) => {
-                              e.stopPropagation?.();
-                              deleteStall(stall);
-                            }}
-                          >
-                            <Text style={styles.menuItemDangerText}>
-                              Delete stall
-                            </Text>
-                          </Pressable>
-                        </View>
-                      )}
-                    </View>
-                  ) : (
-                    // Same footprint as the real kebab button, just
-                    // invisible — keeps every row's button group the
-                    // same total width so right edges line up whether
-                    // or not this stall has a menu to show.
-                    <View style={styles.kebabPlaceholder} />
-                  )}
-                </View>
-              </View>
-            );
-          })}
-        </View>
+              );
+            })}
+          </View>
+        )}
 
         <Modal
           visible={modalOpen}
@@ -315,22 +366,15 @@ export default function StallManagementScreen() {
           animationType="fade"
           onRequestClose={() => setModalOpen(false)}
         >
-          <View
-            style={{
-              flex: 1,
-              backgroundColor: "rgba(22,25,43,0.4)",
-              alignItems: "center",
-              justifyContent: "center",
-              padding: 20,
-            }}
-          >
-            <View style={[shared.card, { width: "100%", maxWidth: 420 }]}>
+          <View style={styles.modalBackdrop}>
+            <View style={[shared.card, styles.formCard]}>
               <Text style={shared.rowTitle}>
                 {editing ? "Edit stall" : "Add stall"}
               </Text>
 
               <Text style={shared.label}>Stall number</Text>
               <TextInput
+                accessibilityLabel="Stall number"
                 style={shared.input}
                 value={form.stall_number}
                 onChangeText={(t) =>
@@ -341,6 +385,7 @@ export default function StallManagementScreen() {
 
               <Text style={shared.label}>Size (optional)</Text>
               <TextInput
+                accessibilityLabel="Size (optional)"
                 style={shared.input}
                 value={form.size}
                 onChangeText={(t) => setForm((f) => ({ ...f, size: t }))}
@@ -349,6 +394,7 @@ export default function StallManagementScreen() {
 
               <Text style={shared.label}>Price per day (₱)</Text>
               <TextInput
+                accessibilityLabel="Price per day (₱)"
                 style={shared.input}
                 value={form.price}
                 onChangeText={(t) => setForm((f) => ({ ...f, price: t }))}
@@ -356,59 +402,109 @@ export default function StallManagementScreen() {
                 keyboardType="numeric"
               />
 
-              <View style={{ flexDirection: "row", gap: 10, marginTop: 20 }}>
-                <Pressable
-                  style={[
-                    shared.secondaryButton,
-                    { flex: 1, alignItems: "center" },
-                  ]}
+              <View style={styles.formActions}>
+                <PressableButton
+                  style={[shared.secondaryButton, styles.formActionButton]}
                   onPress={() => setModalOpen(false)}
                 >
                   <Text style={shared.secondaryButtonText}>Cancel</Text>
-                </Pressable>
-                <Pressable
-                  style={[
-                    shared.primaryButton,
-                    { flex: 1, alignItems: "center" },
-                  ]}
+                </PressableButton>
+                <PressableButton
+                  style={[shared.primaryButton, styles.formActionButton]}
                   onPress={save}
                   disabled={saving}
                 >
                   <Text style={shared.primaryButtonText}>
                     {saving ? "Saving…" : "Save"}
                   </Text>
-                </Pressable>
+                </PressableButton>
               </View>
             </View>
           </View>
         </Modal>
+
+        <ConfirmModal
+          visible={!!pendingDelete}
+          title="Delete stall"
+          message={
+            pendingDelete
+              ? `Delete stall ${pendingDelete.stall_number}? This can't be undone.`
+              : ""
+          }
+          confirmLabel="Delete stall"
+          cancelLabel="Cancel"
+          onConfirm={confirmDelete}
+          onDismiss={() => setPendingDelete(null)}
+        />
       </ScrollView>
     </Pressable>
   );
 }
 
-const styles = {
+// Placeholder shown while stalls are loading.
+function StallsSkeleton() {
+  return (
+    <View>
+      <View style={styles.headerRow}>
+        <View>
+          <View
+            style={[
+              styles.skeletonLine,
+              { width: 70, height: 22, marginBottom: Spacing.sm },
+            ]}
+          />
+          <View style={[styles.skeletonLine, { width: 60 }]} />
+        </View>
+      </View>
+      <View style={[styles.list, { marginTop: Spacing.lg }]}>
+        {[0, 1, 2].map((i) => (
+          <View
+            key={i}
+            style={[shared.row, styles.skeletonBlock, { minHeight: 68 }]}
+          />
+        ))}
+      </View>
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  headerRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+  },
+  emptyState: { marginTop: Spacing.lg },
+  list: { gap: Spacing.sm, marginTop: Spacing.sm },
+  statusRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  historyText: { fontSize: Typography.xs, color: COLORS.slate },
+  rowActions: { flexDirection: "row", gap: Spacing.sm, alignItems: "center" },
+  rowActionsMobile: { marginTop: Spacing.md },
   kebabButton: {
     width: 32,
     height: 32,
     borderRadius: RADIUS.sm,
     borderWidth: 1,
     borderColor: COLORS.border,
-    alignItems: "center" as const,
-    justifyContent: "center" as const,
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: COLORS.white,
   },
-  kebabText: { fontSize: 16, color: COLORS.slate, fontWeight: "700" as const },
   kebabPlaceholder: { width: 32, height: 32 },
   menu: {
-    position: "absolute" as const,
+    position: "absolute",
     top: 38,
     right: 0,
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.sm,
     borderWidth: 1,
     borderColor: COLORS.border,
-    minWidth: 140,
+    minWidth: 150,
     paddingVertical: 4,
     shadowColor: "#000",
     shadowOpacity: 0.1,
@@ -417,10 +513,37 @@ const styles = {
     elevation: 6,
     zIndex: 30,
   },
-  menuItem: { paddingVertical: 10, paddingHorizontal: 14 },
-  menuItemDangerText: {
-    color: COLORS.clay,
-    fontSize: 13,
-    fontWeight: "600" as const,
+  menuItem: {
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.xs,
+    minHeight: 40,
   },
-};
+  menuItemDangerText: {
+    color: COLORS.clayText,
+    fontSize: Typography.base,
+    fontWeight: "600",
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: Colors.overlay,
+    alignItems: "center",
+    justifyContent: "center",
+    padding: Spacing.xl,
+  },
+  formCard: { width: "100%", maxWidth: 420 },
+  formActions: { flexDirection: "row", gap: Spacing.sm, marginTop: Spacing.xl },
+  formActionButton: { flex: 1, alignItems: "center" },
+  skeletonBlock: {
+    backgroundColor: COLORS.border,
+    borderColor: COLORS.border,
+    shadowOpacity: 0,
+  },
+  skeletonLine: {
+    height: 12,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.border,
+  },
+});

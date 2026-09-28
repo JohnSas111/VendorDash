@@ -1,3 +1,6 @@
+import { PressableButton } from "@/components/PressableButton";
+import { PrimaryButton } from "@/components/PrimaryButton";
+import { Radius, Shadow, Spacing, Typography } from "@/constants/theme";
 import {
   BREAKPOINT,
   COLORS,
@@ -7,10 +10,11 @@ import {
   statusColors,
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
+import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -56,6 +60,7 @@ export default function OrganizerHomeScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= BREAKPOINT;
   const router = useRouter();
+  const { showToast } = useToast();
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -148,7 +153,13 @@ export default function OrganizerHomeScreen() {
   }, []);
 
   useEffect(() => {
-    load();
+    // Wrapped in a local async function rather than calling load()
+    // directly — calling a useCallback'd function that setStates
+    // straight in the effect body trips react-hooks/set-state-in-effect.
+    async function run() {
+      await load();
+    }
+    run();
   }, [load]);
 
   const onRefresh = () => {
@@ -192,9 +203,14 @@ export default function OrganizerHomeScreen() {
 
     setActingOnId(null);
     if (error) {
-      setErrorMsg(error.message);
+      // A failed approve/reject is a one-off action error, not a
+      // "the whole dashboard is broken" state — a toast fits better here
+      // than the persistent errorMsg banner (that's reserved for the
+      // initial load failing).
+      showToast(error.message || "Couldn't approve that booking.", "error");
       return;
     }
+    showToast("Booking approved.", "success");
     load();
   };
 
@@ -206,17 +222,24 @@ export default function OrganizerHomeScreen() {
       .eq("id", bookingId);
     setActingOnId(null);
     if (error) {
-      setErrorMsg(error.message);
+      showToast(error.message || "Couldn't reject that booking.", "error");
       return;
     }
+    showToast("Booking rejected.", "info");
     load();
   };
 
   if (loading) {
     return (
-      <View style={styles.centerFill}>
-        <ActivityIndicator color={COLORS.inkNavy} />
-      </View>
+      <ScrollView
+        style={styles.screen}
+        contentContainerStyle={[
+          styles.content,
+          isDesktop && styles.contentDesktop,
+        ]}
+      >
+        <DashboardSkeleton isDesktop={isDesktop} />
+      </ScrollView>
     );
   }
 
@@ -224,9 +247,9 @@ export default function OrganizerHomeScreen() {
     return (
       <View style={styles.centerFill}>
         <Text style={styles.errorText}>{errorMsg}</Text>
-        <Pressable style={styles.retryButton} onPress={load}>
+        <PressableButton style={styles.retryButton} onPress={load}>
           <Text style={styles.retryButtonText}>Retry</Text>
-        </Pressable>
+        </PressableButton>
       </View>
     );
   }
@@ -286,28 +309,26 @@ export default function OrganizerHomeScreen() {
         <Text style={styles.sessionDates}>No upcoming session scheduled</Text>
       )}
 
-      {errorMsg && (
-        <Text style={[styles.errorText, { marginTop: 12 }]}>{errorMsg}</Text>
-      )}
-
       <View style={styles.quickActionsRow}>
-        <Pressable
-          style={shared.primaryButton}
-          onPress={() => router.push("/sessions" as any)}
-        >
-          <Text style={shared.primaryButtonText}>+ Create session</Text>
-        </Pressable>
-        <Pressable
-          style={shared.secondaryButton}
-          onPress={() => router.push("/stalls" as any)}
-        >
-          <Text style={shared.secondaryButtonText}>+ Add stall</Text>
-        </Pressable>
+        <View style={styles.quickActionButton}>
+          <PrimaryButton
+            label="+ Create session"
+            onPress={() => router.push("/sessions" as any)}
+          />
+        </View>
+        <View style={styles.quickActionButton}>
+          <PrimaryButton
+            label="+ Add stall"
+            variant="secondary"
+            onPress={() => router.push("/stalls" as any)}
+          />
+        </View>
       </View>
 
       <View style={[styles.statGrid, isDesktop && styles.statGridDesktop]}>
         {stats.map((s) => (
           <Pressable
+            accessibilityRole="button"
             key={s.label}
             onPress={() => router.push(STAT_TARGETS[s.label] as any)}
             style={[
@@ -317,7 +338,10 @@ export default function OrganizerHomeScreen() {
             ]}
           >
             <Text
-              style={[styles.statValue, s.highlight && { color: COLORS.amber }]}
+              style={[
+                styles.statValue,
+                s.highlight && { color: COLORS.amberText },
+              ]}
             >
               {s.value}
             </Text>
@@ -330,6 +354,12 @@ export default function OrganizerHomeScreen() {
 
       {data.pendingBookings.length === 0 ? (
         <View style={styles.emptyState}>
+          <Ionicons
+            name="checkmark-done-circle-outline"
+            size={28}
+            color={COLORS.slate}
+            style={{ marginBottom: Spacing.xs }}
+          />
           <Text style={styles.emptyStateText}>
             No pending booking requests.
           </Text>
@@ -349,20 +379,22 @@ export default function OrganizerHomeScreen() {
                 </Text>
               </View>
               <View style={styles.rowActions}>
-                <Pressable
+                <PressableButton
                   style={[styles.actionButton, styles.rejectButton]}
                   disabled={actingOnId === b.id}
                   onPress={() => handleReject(b.id)}
                 >
+                  <Ionicons name="close" size={14} color={COLORS.clay} />
                   <Text style={styles.rejectButtonText}>Reject</Text>
-                </Pressable>
-                <Pressable
+                </PressableButton>
+                <PressableButton
                   style={[styles.actionButton, styles.approveButton]}
                   disabled={actingOnId === b.id}
                   onPress={() => handleApprove(b.id)}
                 >
+                  <Ionicons name="checkmark" size={14} color={COLORS.white} />
                   <Text style={styles.approveButtonText}>Approve</Text>
-                </Pressable>
+                </PressableButton>
               </View>
             </View>
           ))}
@@ -370,22 +402,64 @@ export default function OrganizerHomeScreen() {
       )}
 
       {data.pendingBookingCount > data.pendingBookings.length && (
-        <Pressable onPress={() => router.push("/booking-requests" as any)}>
+        <Pressable
+          accessibilityRole="link"
+          style={styles.moreLinkRow}
+          onPress={() => router.push("/booking-requests" as any)}
+        >
           <Text style={styles.moreLink}>
             + {data.pendingBookingCount - data.pendingBookings.length} more on
-            Booking Requests →
+            Booking Requests
           </Text>
+          <Ionicons name="chevron-forward" size={14} color={COLORS.inkNavy} />
         </Pressable>
       )}
     </ScrollView>
   );
 }
 
+// Placeholder shown while the dashboard's first load is in flight,
+// replacing the old lone centered ActivityIndicator.
+function DashboardSkeleton({ isDesktop }: { isDesktop: boolean }) {
+  return (
+    <View>
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: 160, height: 26, marginBottom: Spacing.sm },
+        ]}
+      />
+      <View
+        style={[styles.skeletonLine, { width: 120, marginBottom: Spacing.lg }]}
+      />
+      <View style={[styles.statGrid, isDesktop && styles.statGridDesktop]}>
+        {[0, 1, 2, 3].map((i) => (
+          <View
+            key={i}
+            style={[
+              styles.statCard,
+              isDesktop && styles.statCardDesktop,
+              styles.skeletonCard,
+            ]}
+          />
+        ))}
+      </View>
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: 140, marginTop: Spacing.xxl, marginBottom: Spacing.md },
+        ]}
+      />
+      <View style={[styles.row, styles.skeletonCard]} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.paper },
-  content: { padding: 20, paddingBottom: 48 },
+  content: { padding: Spacing.xl, paddingBottom: Spacing.xxxl + Spacing.lg },
   contentDesktop: {
-    padding: 40,
+    padding: Spacing.xxxl + Spacing.lg,
     maxWidth: 960,
     alignSelf: "center",
     width: "100%",
@@ -395,71 +469,92 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     backgroundColor: COLORS.paper,
-    padding: 24,
+    padding: Spacing.xxl,
   },
   title: {
     fontFamily: "serif",
-    fontSize: 28,
+    fontSize: Typography.xxxl - 4,
     color: COLORS.inkNavy,
-    marginBottom: 4,
+    marginBottom: Spacing.xs,
   },
-  subtitle: { fontSize: 15, color: COLORS.slate, marginBottom: 2 },
+  subtitle: { fontSize: Typography.md, color: COLORS.slate, marginBottom: 2 },
   sessionRow: {
     flexDirection: "row",
     alignItems: "center",
-    gap: 8,
+    gap: Spacing.sm,
     marginTop: 2,
   },
-  sessionDates: { fontSize: 13, color: COLORS.slate },
-  errorText: { color: COLORS.clay, fontSize: 14 },
+  sessionDates: { fontSize: Typography.base, color: COLORS.slate },
+  errorText: { color: COLORS.clayText, fontSize: Typography.md },
   retryButton: {
-    marginTop: 12,
+    marginTop: Spacing.md,
     backgroundColor: COLORS.inkNavy,
     borderRadius: RADIUS.sm,
-    paddingVertical: 10,
-    paddingHorizontal: 20,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.xl,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
   },
   retryButtonText: { color: COLORS.white, fontWeight: "600" },
 
-  quickActionsRow: { flexDirection: "row", gap: 10, marginTop: 20 },
+  quickActionsRow: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+    marginTop: Spacing.xl,
+  },
+  quickActionButton: { flex: 1 },
 
-  statGrid: { marginTop: 20, gap: 12 },
+  statGrid: { marginTop: Spacing.xl, gap: Spacing.md },
   statGridDesktop: { flexDirection: "row" },
   statCard: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: 16,
+    padding: Spacing.lg,
+    ...Shadow.sm,
+  },
+  skeletonCard: {
+    backgroundColor: COLORS.border,
+    shadowOpacity: 0,
+    minHeight: 64,
+  },
+  skeletonLine: {
+    height: 10,
+    borderRadius: Radius.xs,
+    backgroundColor: COLORS.border,
   },
   statCardDesktop: { flex: 1 },
   statCardHighlight: { borderColor: COLORS.amber },
   statValue: {
-    fontSize: 26,
+    fontSize: Typography.xxl + 2,
     fontWeight: "700",
     color: COLORS.inkNavy,
     marginBottom: 2,
   },
-  statLabel: { fontSize: 13, color: COLORS.slate },
+  statLabel: { fontSize: Typography.base, color: COLORS.slate },
 
   emptyState: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: 20,
+    padding: Spacing.xl,
     alignItems: "center",
+    ...Shadow.sm,
   },
-  emptyStateText: { color: COLORS.slate, fontSize: 14 },
+  emptyStateText: { color: COLORS.slate, fontSize: Typography.md },
 
-  list: { gap: 10 },
+  list: { gap: Spacing.sm },
   row: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.md,
     borderWidth: 1,
     borderColor: COLORS.border,
-    padding: 14,
-    gap: 10,
+    padding: Spacing.md,
+    gap: Spacing.sm,
+    ...Shadow.sm,
   },
   rowDesktop: {
     flexDirection: "row",
@@ -467,27 +562,50 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   rowInfo: { flex: 1 },
-  rowTitle: { fontSize: 15, fontWeight: "600", color: COLORS.inkNavy },
-  rowSubtitle: { fontSize: 13, color: COLORS.slate, marginTop: 2 },
-  rowActions: { flexDirection: "row", gap: 8 },
+  rowTitle: {
+    fontSize: Typography.md,
+    fontWeight: "600",
+    color: COLORS.inkNavy,
+  },
+  rowSubtitle: { fontSize: Typography.base, color: COLORS.slate, marginTop: 2 },
+  rowActions: { flexDirection: "row", gap: Spacing.sm },
   actionButton: {
     borderRadius: RADIUS.sm,
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+    paddingVertical: Spacing.sm,
+    paddingHorizontal: Spacing.lg,
+    minHeight: 44,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.xs,
   },
   rejectButton: {
     backgroundColor: COLORS.paper,
     borderWidth: 1,
     borderColor: COLORS.clay,
   },
-  rejectButtonText: { color: COLORS.clay, fontWeight: "600", fontSize: 13 },
+  rejectButtonText: {
+    color: COLORS.clayText,
+    fontWeight: "600",
+    fontSize: Typography.base,
+  },
   approveButton: { backgroundColor: COLORS.teal },
-  approveButtonText: { color: COLORS.white, fontWeight: "600", fontSize: 13 },
-
-  moreLink: {
-    marginTop: 12,
+  approveButtonText: {
     color: COLORS.inkNavy,
-    fontSize: 13,
+    fontWeight: "600",
+    fontSize: Typography.base,
+  },
+
+  moreLinkRow: {
+    marginTop: Spacing.md,
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.xs,
+    minHeight: 44,
+  },
+  moreLink: {
+    color: COLORS.inkNavy,
+    fontSize: Typography.base,
     fontWeight: "600",
   },
 });

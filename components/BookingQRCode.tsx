@@ -1,3 +1,4 @@
+import { Colors } from "@/constants/theme";
 import { StyleSheet, Text, View } from "react-native";
 import QRCode from "react-native-qrcode-svg";
 
@@ -28,7 +29,7 @@ export function BookingQRCode({ bookingId, checkedIn, size = 200 }: Props) {
 const styles = StyleSheet.create({
   container: { alignItems: "center", paddingVertical: 20 },
   label: { fontSize: 14, fontWeight: "600", marginBottom: 12 },
-  qrWrap: { padding: 16, backgroundColor: "#FFFFFF", borderRadius: 12 },
+  qrWrap: { padding: 16, backgroundColor: Colors.white, borderRadius: 12 },
   qrWrapDimmed: { opacity: 0.4 },
-  checkedInNote: { fontSize: 12, color: "#8A8A8A", marginTop: 10 },
+  checkedInNote: { fontSize: 12, color: Colors.textMuted, marginTop: 10 },
 });

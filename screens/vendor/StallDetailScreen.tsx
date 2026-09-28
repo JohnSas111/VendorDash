@@ -1,16 +1,10 @@
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius } from "@/constants/theme";
+import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
 import { router, useLocalSearchParams } from "expo-router";
 import { useEffect, useState } from "react";
-import {
-  Alert,
-  StyleSheet,
-  Switch,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { StyleSheet, Switch, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 type Stall = {
@@ -43,6 +37,7 @@ export default function StallDetailScreen() {
   const [submitting, setSubmitting] = useState(false);
 
   const insets = useSafeAreaInsets();
+  const { showToast } = useToast();
 
   useEffect(() => {
     async function load() {
@@ -52,13 +47,14 @@ export default function StallDetailScreen() {
       // checking availability against accurate, current data.
       await supabase.rpc("expire_stale_bookings");
 
-      const { data: stallData } = await supabase
+      const { data: stallData, error: stallError } = await supabase
         .from("stalls")
         .select("id, stall_number, size, price_per_day_cents")
         .eq("id", stallId)
         .single();
 
-      if (!stallData) {
+      if (stallError || !stallData) {
+        showToast("Couldn't load that stall.", "error");
         setLoading(false);
         return;
       }
@@ -97,7 +93,7 @@ export default function StallDetailScreen() {
       setLoading(false);
     }
     load();
-  }, [stallId, sessionId]);
+  }, [stallId, sessionId, showToast]);
 
   function toggleDay(day: Day) {
     setSelectedDays((prev) =>
@@ -111,10 +107,7 @@ export default function StallDetailScreen() {
 
   async function handleContinue() {
     if (!stall || !sessionId || selectedDays.length === 0) {
-      Alert.alert(
-        "Pick at least one day",
-        "Select which days you'll attend before continuing.",
-      );
+      showToast("Select which days you'll attend before continuing.", "error");
       return;
     }
 
@@ -153,13 +146,13 @@ export default function StallDetailScreen() {
     if (error) {
       setSubmitting(false);
       if (error.code === "23505") {
-        Alert.alert(
-          "Stall no longer available",
-          "Someone else just booked this stall. Please pick a different one.",
+        showToast(
+          "Someone else just booked this stall. Pick a different one.",
+          "error",
         );
         router.replace("/(vendor)/floor-map");
       } else {
-        Alert.alert("Booking failed", error.message);
+        showToast(error.message || "Booking failed.", "error");
       }
       return;
     }
@@ -187,13 +180,15 @@ export default function StallDetailScreen() {
   if (loading || !stall) {
     return (
       <View style={styles.container}>
-        <Text>Loading stall...</Text>
+        <StallDetailSkeleton />
       </View>
     );
   }
 
   return (
-    <View style={[styles.container, { paddingBottom: insets.bottom + 12 }]}>
+    <View
+      style={[styles.container, { paddingBottom: insets.bottom + Spacing.md }]}
+    >
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Stall {stall.stall_number}</Text>
         <Text style={styles.headerSubtitle}>
@@ -207,9 +202,13 @@ export default function StallDetailScreen() {
           const selected = selectedDays.includes(day);
           return (
             <TouchableOpacity
+              accessibilityRole="checkbox"
+              accessibilityState={{ checked: selected }}
+              accessibilityLabel={day}
               key={day}
               style={[styles.dayBox, selected && styles.dayBoxSelected]}
               onPress={() => toggleDay(day)}
+              activeOpacity={0.7}
             >
               <Text style={styles.dayText}>
                 {day.charAt(0).toUpperCase() + day.slice(1, 3)}
@@ -241,38 +240,88 @@ export default function StallDetailScreen() {
   );
 }
 
+// Placeholder shown while the stall is loading, replacing the old plain
+// "Loading stall..." text.
+function StallDetailSkeleton() {
+  return (
+    <View>
+      <View style={[styles.header, styles.skeletonHeader]} />
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: "50%", marginBottom: Spacing.sm },
+        ]}
+      />
+      <View style={styles.dayRow}>
+        {[0, 1, 2].map((i) => (
+          <View key={i} style={[styles.dayBox, styles.skeletonBox]} />
+        ))}
+      </View>
+      <View style={[styles.toggleRow, styles.skeletonBox]} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
     backgroundColor: Colors.background,
-    padding: 16,
-    paddingTop: 20,
+    padding: Spacing.lg,
+    paddingTop: Spacing.xl,
   },
   header: {
     backgroundColor: Colors.available,
     borderRadius: Radius.md,
-    padding: 20,
+    padding: Spacing.xl,
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: Spacing.xl,
+    ...Shadow.sm,
   },
-  headerTitle: { color: Colors.white, fontSize: 16, fontWeight: "600" },
-  headerSubtitle: { color: Colors.white, fontSize: 12, marginTop: 4 },
-  label: { fontSize: 12, color: Colors.textMuted, marginBottom: 8 },
-  dayRow: { flexDirection: "row", gap: 8, marginBottom: 16 },
+  skeletonHeader: {
+    backgroundColor: Colors.borderLight,
+    shadowOpacity: 0,
+    height: 88,
+  },
+  skeletonBox: { backgroundColor: Colors.borderLight },
+  skeletonLine: {
+    height: 12,
+    borderRadius: Radius.xs,
+    backgroundColor: Colors.borderLight,
+  },
+  headerTitle: {
+    color: Colors.white,
+    fontSize: Typography.md,
+    fontWeight: "600",
+  },
+  headerSubtitle: {
+    color: Colors.white,
+    fontSize: Typography.sm,
+    marginTop: Spacing.xs,
+  },
+  label: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    marginBottom: Spacing.sm,
+  },
+  dayRow: { flexDirection: "row", gap: Spacing.sm, marginBottom: Spacing.lg },
   dayBox: {
     flex: 1,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.sm,
-    paddingVertical: 12,
+    paddingVertical: Spacing.md,
     alignItems: "center",
+    backgroundColor: Colors.white,
   },
   dayBoxSelected: {
     borderColor: Colors.info,
     borderWidth: 2,
     backgroundColor: Colors.infoLight,
   },
-  dayText: { fontSize: 13, fontWeight: "500" },
+  dayText: { fontSize: Typography.base, fontWeight: "500", color: Colors.text },
   toggleRow: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -280,21 +329,26 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.sm,
-    padding: 12,
-    marginBottom: 20,
+    padding: Spacing.md,
+    marginBottom: Spacing.xl,
+    backgroundColor: Colors.white,
   },
-  toggleLabel: { fontSize: 12, color: Colors.textMuted },
+  toggleLabel: { fontSize: Typography.sm, color: Colors.textMuted },
   footer: {
     marginTop: "auto",
     borderTopWidth: 1,
     borderTopColor: Colors.borderLight,
-    paddingTop: 14,
+    paddingTop: Spacing.lg,
   },
   totalRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 10,
+    marginBottom: Spacing.md,
   },
-  totalLabel: { fontSize: 13, color: Colors.textMuted },
-  totalValue: { fontSize: 18, fontWeight: "600" },
+  totalLabel: { fontSize: Typography.base, color: Colors.textMuted },
+  totalValue: {
+    fontSize: Typography.xl,
+    fontWeight: "600",
+    color: Colors.text,
+  },
 });

@@ -1,16 +1,19 @@
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius } from "@/constants/theme";
+import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
+import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
 import * as WebBrowser from "expo-web-browser";
 import { useState } from "react";
-import { Alert, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import { StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 const SERVICE_FEE_CENTS = 400; // ₱4 flat
 
 type PaymentMethod = "gcash" | "paymaya";
 
+// UNCHANGED: payment status polling logic — not touched by this pass.
 async function waitForPaymentStatus(
   bookingId: string,
   attempts = 6,
@@ -43,11 +46,16 @@ export default function PaymentScreen() {
   const [processing, setProcessing] = useState(false);
   const [checking, setChecking] = useState(false);
 
+  const { showToast } = useToast();
+
   const stallTotal = amount ? parseInt(amount, 10) : 0;
   const total = stallTotal + SERVICE_FEE_CENTS;
 
   const insets = useSafeAreaInsets();
 
+  // UNCHANGED control flow: invoke create-payment → open checkout →
+  // poll status → route. Only the three Alert.alert() calls became
+  // toasts — nothing about when they fire or what happens after changed.
   async function handlePay() {
     if (!bookingId) return;
     setProcessing(true);
@@ -58,9 +66,9 @@ export default function PaymentScreen() {
 
     if (error || !data?.checkoutUrl) {
       setProcessing(false);
-      Alert.alert(
-        "Payment setup failed",
-        error?.message ?? "Please try again.",
+      showToast(
+        error?.message ?? "Payment setup failed. Please try again.",
+        "error",
       );
       return;
     }
@@ -75,14 +83,11 @@ export default function PaymentScreen() {
     if (status === "paid") {
       router.replace("/(vendor)/confirmation");
     } else if (status === "failed") {
-      Alert.alert(
-        "Payment failed",
-        "The payment did not go through. Please try again.",
-      );
+      showToast("The payment did not go through. Please try again.", "error");
     } else {
-      Alert.alert(
-        "Still confirming",
-        "We haven't received confirmation yet. If you completed the payment, check My Bookings in a moment — it may just be catching up.",
+      showToast(
+        "Still confirming — check My Bookings in a moment if you already paid.",
+        "info",
       );
       router.replace("/(vendor)/my-bookings");
     }
@@ -94,7 +99,7 @@ export default function PaymentScreen() {
   ];
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + 12 }]}>
+    <View style={[styles.container, { paddingTop: insets.top + Spacing.md }]}>
       <Text style={styles.title}>Payment</Text>
 
       <View style={styles.summaryCard}>
@@ -120,28 +125,43 @@ export default function PaymentScreen() {
       </View>
 
       <Text style={styles.label}>Pay with</Text>
-      {methods.map((m) => (
-        <TouchableOpacity
-          key={m.key}
-          style={[
-            styles.methodBox,
-            method === m.key && styles.methodBoxSelected,
-          ]}
-          onPress={() => setMethod(m.key)}
-        >
-          <Text style={styles.methodText}>{m.label}</Text>
-        </TouchableOpacity>
-      ))}
+      {methods.map((m) => {
+        const selected = method === m.key;
+        return (
+          <TouchableOpacity
+            key={m.key}
+            style={[styles.methodBox, selected && styles.methodBoxSelected]}
+            onPress={() => setMethod(m.key)}
+            accessibilityRole="radio"
+            accessibilityState={{ selected }}
+          >
+            <Ionicons
+              name="wallet-outline"
+              size={18}
+              color={selected ? Colors.info : Colors.textMuted}
+            />
+            <Text style={styles.methodText}>{m.label}</Text>
+            <Ionicons
+              name={selected ? "radio-button-on" : "radio-button-off"}
+              size={18}
+              color={selected ? Colors.info : Colors.border}
+              style={styles.methodRadio}
+            />
+          </TouchableOpacity>
+        );
+      })}
 
-      <PrimaryButton
-        label={
-          checking
-            ? "Confirming payment..."
-            : `Pay ₱${(total / 100).toLocaleString()}`
-        }
-        onPress={handlePay}
-        loading={processing || checking}
-      />
+      <View style={styles.buttonWrap}>
+        <PrimaryButton
+          label={
+            checking
+              ? "Confirming payment..."
+              : `Pay ₱${(total / 100).toLocaleString()}`
+          }
+          onPress={handlePay}
+          loading={processing || checking}
+        />
+      </View>
       <Text style={styles.note}>Test mode · PayMongo sandbox</Text>
     </View>
   );
@@ -150,49 +170,77 @@ export default function PaymentScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
     backgroundColor: Colors.background,
-    padding: 20,
-    paddingTop: 20,
+    padding: Spacing.xl,
+    paddingTop: Spacing.xl,
   },
-  title: { fontSize: 16, fontWeight: "500", marginBottom: 16 },
+  title: {
+    fontSize: Typography.md,
+    fontWeight: "500",
+    color: Colors.text,
+    marginBottom: Spacing.lg,
+  },
   summaryCard: {
     backgroundColor: Colors.white,
     borderRadius: Radius.md,
-    padding: 14,
-    marginBottom: 16,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
+    ...Shadow.sm,
   },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: 6,
+    marginBottom: Spacing.xs,
   },
-  summaryLabel: { fontSize: 13, color: Colors.textMuted },
-  summaryValue: { fontSize: 13, color: Colors.textMuted },
+  summaryLabel: { fontSize: Typography.base, color: Colors.textMuted },
+  summaryValue: { fontSize: Typography.base, color: Colors.textMuted },
   divider: {
     height: 1,
     backgroundColor: Colors.borderLight,
-    marginVertical: 6,
+    marginVertical: Spacing.xs,
   },
-  totalLabel: { fontSize: 14, fontWeight: "600" },
-  totalValue: { fontSize: 14, fontWeight: "600" },
-  label: { fontSize: 12, color: Colors.textMuted, marginBottom: 8 },
+  totalLabel: {
+    fontSize: Typography.md,
+    fontWeight: "600",
+    color: Colors.text,
+  },
+  totalValue: {
+    fontSize: Typography.md,
+    fontWeight: "600",
+    color: Colors.text,
+  },
+  label: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    marginBottom: Spacing.sm,
+  },
   methodBox: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
     borderWidth: 1,
     borderColor: Colors.border,
     borderRadius: Radius.sm,
-    padding: 12,
-    marginBottom: 8,
+    paddingHorizontal: Spacing.md,
+    marginBottom: Spacing.sm,
+    minHeight: 44,
+    backgroundColor: Colors.white,
   },
   methodBoxSelected: {
     borderColor: Colors.info,
     borderWidth: 2,
     backgroundColor: Colors.infoLight,
   },
-  methodText: { fontSize: 13 },
+  methodText: { fontSize: Typography.base, color: Colors.text, flex: 1 },
+  methodRadio: { marginLeft: "auto" },
+  buttonWrap: { marginTop: Spacing.sm },
   note: {
-    fontSize: 10,
+    fontSize: Typography.xs,
     color: Colors.textMuted,
     textAlign: "center",
-    marginTop: 8,
+    marginTop: Spacing.sm,
   },
 });

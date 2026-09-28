@@ -14,12 +14,12 @@
 
 import { InputField } from "@/components/InputField";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors } from "@/constants/theme";
+import { Colors, Shadow, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
 import { router } from "expo-router";
 import { useState } from "react";
 import {
-  Alert,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -36,10 +36,11 @@ export default function LoginScreen() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const { showToast } = useToast();
 
   async function handleLogin() {
     if (!email || !password) {
-      Alert.alert("Missing info", "Please enter both email and password.");
+      showToast("Please enter both email and password.", "error");
       return;
     }
 
@@ -51,7 +52,7 @@ export default function LoginScreen() {
 
     if (error) {
       setLoading(false);
-      Alert.alert("Login failed", error.message);
+      showToast(error.message || "Login failed. Please try again.", "error");
       return;
     }
 
@@ -100,8 +101,11 @@ export default function LoginScreen() {
       />
 
       <View style={styles.linkRow}>
-        <Text style={styles.linkText}>Don't have an account? </Text>
-        <TouchableOpacity onPress={() => router.push("/(auth)/signup")}>
+        <Text style={styles.linkText}>Don’t have an account? </Text>
+        <TouchableOpacity
+          accessibilityRole="link"
+          onPress={() => router.push("/(auth)/signup")}
+        >
           <Text style={styles.link}>Sign up</Text>
         </TouchableOpacity>
       </View>
@@ -132,13 +136,24 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: Colors.background,
-    padding: 24,
+    padding: Spacing.xxl,
     paddingTop: 80,
   },
-  title: { fontSize: 20, fontWeight: "bold", marginBottom: 24 },
-  linkRow: { flexDirection: "row", justifyContent: "center", marginTop: 16 },
-  linkText: { fontSize: 12, fontWeight: "600" },
-  link: { fontSize: 12, fontWeight: "600", color: Colors.info },
+  title: {
+    fontSize: Typography.xl,
+    fontWeight: "bold",
+    color: Colors.text,
+    marginBottom: Spacing.xxl,
+  },
+  linkRow: {
+    flexDirection: "row",
+    justifyContent: "center",
+    alignItems: "center",
+    marginTop: Spacing.lg,
+    minHeight: 44,
+  },
+  linkText: { fontSize: Typography.sm, fontWeight: "600", color: Colors.text },
+  link: { fontSize: Typography.sm, fontWeight: "600", color: Colors.info },
 });
 
 const desktopStyles = StyleSheet.create({
@@ -155,7 +170,12 @@ const desktopStyles = StyleSheet.create({
     color: Colors.white,
     marginBottom: 16,
   },
-  tagline: { fontSize: 16, color: "#C7CAD6", maxWidth: 340, lineHeight: 24 },
+  tagline: {
+    fontSize: Typography.lg,
+    color: Colors.onDarkMuted,
+    maxWidth: 340,
+    lineHeight: 24,
+  },
   dot: {
     width: 48,
     height: 48,
@@ -175,16 +195,12 @@ const desktopStyles = StyleSheet.create({
     backgroundColor: Colors.white,
     borderRadius: 16,
     padding: 36,
-    shadowColor: "#000",
-    shadowOpacity: 0.06,
-    shadowRadius: 24,
-    shadowOffset: { width: 0, height: 8 },
-    elevation: 3,
+    ...Shadow.md,
   },
   title: {
-    fontSize: 24,
+    fontSize: Typography.xxl,
     fontWeight: "700",
     color: Colors.text,
-    marginBottom: 24,
+    marginBottom: Spacing.xxl,
   },
 });

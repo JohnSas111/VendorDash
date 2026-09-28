@@ -1,18 +1,14 @@
+// PATH: screens/vendor/CompleteProfileScreen.tsx  (replace the file at exactly this path)
 import { InputField } from "@/components/InputField";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius } from "@/constants/theme";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
 import { pickAndUploadImage } from "@/lib/upload";
+import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
-import {
-  Alert,
-  Image,
-  StyleSheet,
-  Text,
-  TouchableOpacity,
-  View,
-} from "react-native";
+import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 
 export default function CompleteProfileScreen() {
   const [phone, setPhone] = useState("");
@@ -23,13 +19,18 @@ export default function CompleteProfileScreen() {
   const [loading, setLoading] = useState(false);
   const [initialLoading, setInitialLoading] = useState(true);
 
+  const { showToast } = useToast();
+
   useEffect(() => {
     async function loadExisting() {
       const { data: userData } = await supabase.auth.getUser();
       const userId = userData.user?.id;
       if (!userId) return;
 
-      const [{ data: profile }, { data: vendorDetails }] = await Promise.all([
+      const [
+        { data: profile, error: profileError },
+        { data: vendorDetails, error: vendorError },
+      ] = await Promise.all([
         supabase.from("profiles").select("phone").eq("id", userId).single(),
         supabase
           .from("vendor_details")
@@ -37,6 +38,12 @@ export default function CompleteProfileScreen() {
           .eq("id", userId)
           .single(),
       ]);
+
+      // Previously never checked — a failed fetch just left the form
+      // blank with no indication anything went wrong.
+      if (profileError || vendorError) {
+        showToast("Some of your existing details couldn't be loaded.", "error");
+      }
 
       if (profile?.phone) setPhone(profile.phone);
       if (vendorDetails?.category) setCategory(vendorDetails.category);
@@ -46,7 +53,7 @@ export default function CompleteProfileScreen() {
       setInitialLoading(false);
     }
     loadExisting();
-  }, []);
+  }, [showToast]);
 
   async function handleUploadPermit() {
     const { data: userData } = await supabase.auth.getUser();
@@ -61,17 +68,14 @@ export default function CompleteProfileScreen() {
         `${userId}/permit`,
       );
 
-      console.log("NEW PERMIT URL:", url);
-
       if (url) {
         setPermitUrl(url);
-        Alert.alert("Image selected", "The new image was uploaded.");
+        showToast("Permit image uploaded.", "success");
       }
     } catch (err) {
-      console.log("PERMIT UPLOAD ERROR:", err);
-      Alert.alert(
-        "Upload failed",
-        err instanceof Error ? err.message : "Please try again.",
+      showToast(
+        err instanceof Error ? err.message : "Upload failed. Please try again.",
+        "error",
       );
     } finally {
       setUploading(false);
@@ -84,7 +88,7 @@ export default function CompleteProfileScreen() {
     const { data: userData, error: userError } = await supabase.auth.getUser();
     if (userError || !userData.user) {
       setLoading(false);
-      Alert.alert("Something went wrong", "Please log in again.");
+      showToast("Please log in again.", "error");
       router.replace("/(auth)/login");
       return;
     }
@@ -97,7 +101,7 @@ export default function CompleteProfileScreen() {
       .eq("id", userId);
     if (profileError) {
       setLoading(false);
-      Alert.alert("Save failed", profileError.message);
+      showToast(profileError.message, "error");
       return;
     }
 
@@ -109,18 +113,18 @@ export default function CompleteProfileScreen() {
     setLoading(false);
 
     if (vendorError) {
-      Alert.alert("Save failed", vendorError.message);
+      showToast(vendorError.message, "error");
       return;
     }
 
-    Alert.alert("Saved", "Your profile has been updated.");
+    showToast("Your profile has been updated.", "success");
     router.back();
   }
 
   if (initialLoading) {
     return (
       <View style={styles.container}>
-        <Text>Loading...</Text>
+        <ProfileSkeleton />
       </View>
     );
   }
@@ -152,19 +156,31 @@ export default function CompleteProfileScreen() {
       />
 
       <TouchableOpacity
+        accessibilityRole="button"
         style={styles.uploadBox}
         onPress={handleUploadPermit}
         disabled={uploading}
       >
         {permitUrl ? (
           <View style={styles.uploadedRow}>
-            <Image source={{ uri: permitUrl }} style={styles.thumbnail} />
+            <Image
+              accessibilityLabel="Uploaded business permit preview"
+              source={{ uri: permitUrl }}
+              style={styles.thumbnail}
+            />
             <Text style={styles.uploadedText}>Tap to replace</Text>
           </View>
         ) : (
-          <Text style={styles.uploadText}>
-            {uploading ? "Uploading..." : "+ Upload business permit"}
-          </Text>
+          <View style={styles.uploadPrompt}>
+            <Ionicons
+              name="cloud-upload-outline"
+              size={22}
+              color={Colors.textMuted}
+            />
+            <Text style={styles.uploadText}>
+              {uploading ? "Uploading…" : "Upload business permit"}
+            </Text>
+          </View>
         )}
       </TouchableOpacity>
 
@@ -177,41 +193,95 @@ export default function CompleteProfileScreen() {
   );
 }
 
+// Placeholder shown while existing profile details are loading,
+// replacing the old plain "Loading..." text.
+function ProfileSkeleton() {
+  return (
+    <View>
+      <View
+        style={[
+          styles.skeletonLine,
+          {
+            width: "60%",
+            height: 18,
+            alignSelf: "center",
+            marginBottom: Spacing.xs,
+          },
+        ]}
+      />
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: "45%", alignSelf: "center", marginBottom: Spacing.xxl },
+        ]}
+      />
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={[styles.skeletonInput]} />
+      ))}
+      <View style={[styles.uploadBox, styles.skeletonUpload]} />
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: "100%",
+    maxWidth: 640,
+    alignSelf: "center",
     backgroundColor: Colors.background,
-    padding: 24,
-    paddingTop: 20,
+    padding: Spacing.xxl,
+    paddingTop: Spacing.xl,
   },
   title: {
-    fontSize: 20,
+    fontSize: Typography.xl,
     fontWeight: "bold",
+    color: Colors.text,
     textAlign: "center",
-    marginBottom: 4,
+    marginBottom: Spacing.xs,
   },
   subtitle: {
-    fontSize: 12,
+    fontSize: Typography.sm,
     color: Colors.textMuted,
     textAlign: "center",
-    marginBottom: 24,
+    marginBottom: Spacing.xxl,
   },
   uploadBox: {
     borderWidth: 1,
     borderColor: Colors.textMuted,
     borderStyle: "dashed",
     borderRadius: Radius.sm,
-    padding: 24,
+    padding: Spacing.xxl,
     alignItems: "center",
-    marginBottom: 20,
+    marginBottom: Spacing.xl,
   },
-  uploadText: { color: Colors.textMuted, fontSize: 12 },
+  uploadPrompt: { alignItems: "center", gap: Spacing.xs },
+  uploadText: { color: Colors.textMuted, fontSize: Typography.sm },
   uploadedRow: { alignItems: "center" },
   thumbnail: {
     width: 80,
     height: 80,
     borderRadius: Radius.sm,
-    marginBottom: 8,
+    marginBottom: Spacing.sm,
   },
-  uploadedText: { color: Colors.info, fontSize: 12, fontWeight: "600" },
+  uploadedText: {
+    color: Colors.info,
+    fontSize: Typography.sm,
+    fontWeight: "600",
+  },
+  skeletonLine: {
+    height: 10,
+    borderRadius: Radius.xs,
+    backgroundColor: Colors.borderLight,
+  },
+  skeletonInput: {
+    height: 44,
+    borderRadius: Radius.sm,
+    backgroundColor: Colors.borderLight,
+    marginBottom: Spacing.md,
+  },
+  skeletonUpload: {
+    backgroundColor: Colors.borderLight,
+    borderColor: Colors.borderLight,
+  },
 });

@@ -1,12 +1,15 @@
+import { PressableButton } from "@/components/PressableButton";
+import { Spacing, Typography } from "@/constants/theme";
 import { BREAKPOINT, COLORS, shared, statusColors } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
+import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Alert,
   Linking,
   Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   useWindowDimensions,
   View,
@@ -27,6 +30,7 @@ type Filter = (typeof FILTERS)[number];
 export default function VendorVerificationScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= BREAKPOINT;
+  const { showToast } = useToast();
 
   const [filter, setFilter] = useState<Filter>("unverified");
   const [rows, setRows] = useState<VendorDetail[]>([]);
@@ -62,7 +66,13 @@ export default function VendorVerificationScreen() {
   }, [filter]);
 
   useEffect(() => {
-    load();
+    // Wrapped in a local async function rather than calling load()
+    // directly — calling a useCallback'd function that setStates
+    // straight in the effect body trips react-hooks/set-state-in-effect.
+    async function run() {
+      await load();
+    }
+    run();
   }, [load]);
 
   const setVerified = async (id: string, verified: boolean) => {
@@ -73,15 +83,22 @@ export default function VendorVerificationScreen() {
       .eq("id", id);
     setActingOnId(null);
     if (err) {
-      Alert.alert(
-        "Could not update",
+      showToast(
         err.message.includes("policy")
           ? "This likely means migration-organizer-web.sql hasn\u2019t been run yet — organizers need its RLS policy to update vendor_details."
           : err.message,
+        "error",
       );
       return;
     }
+    showToast(verified ? "Vendor verified." : "Vendor unverified.", "success");
     load();
+  };
+
+  const openPermit = (url: string) => {
+    Linking.openURL(url).catch(() => {
+      showToast("Couldn't open that permit link.", "error");
+    });
   };
 
   return (
@@ -97,40 +114,47 @@ export default function VendorVerificationScreen() {
         Review business permits and mark vendors verified.
       </Text>
 
-      <View style={{ flexDirection: "row", gap: 8, marginBottom: 16 }}>
+      <View style={styles.filterRow}>
         {FILTERS.map((f) => (
-          <Pressable
+          <PressableButton
             key={f}
             onPress={() => setFilter(f)}
             style={[
               shared.secondaryButton,
-              filter === f && { backgroundColor: COLORS.inkNavy },
+              filter === f && styles.filterActive,
             ]}
           >
             <Text
               style={[
                 shared.secondaryButtonText,
-                filter === f && { color: COLORS.white },
+                filter === f && styles.filterActiveText,
               ]}
             >
               {f}
             </Text>
-          </Pressable>
+          </PressableButton>
         ))}
       </View>
 
       {error && (
-        <Text style={[shared.errorText, { marginBottom: 12 }]}>{error}</Text>
+        <Text style={[shared.errorText, styles.errorText]}>{error}</Text>
       )}
 
       {loading ? (
-        <ActivityIndicator color={COLORS.inkNavy} />
+        <RowsSkeleton />
       ) : rows.length === 0 ? (
         <View style={shared.emptyState}>
-          <Text style={shared.emptyStateText}>Nothing to review here.</Text>
+          <Ionicons
+            name="shield-checkmark-outline"
+            size={26}
+            color={COLORS.slate}
+          />
+          <Text style={[shared.emptyStateText, { marginTop: Spacing.xs }]}>
+            Nothing to review here.
+          </Text>
         </View>
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={styles.list}>
           {rows.map((v) => {
             const { bg, fg } = statusColors(
               v.is_verified ? "verified" : "unverified",
@@ -145,14 +169,7 @@ export default function VendorVerificationScreen() {
                   <Text style={shared.rowSubtitle}>
                     {v.vendor_name} {v.category ? `· ${v.category}` : ""}
                   </Text>
-                  <View
-                    style={{
-                      flexDirection: "row",
-                      gap: 8,
-                      alignItems: "center",
-                      marginTop: 6,
-                    }}
-                  >
+                  <View style={styles.metaRow}>
                     <View style={[shared.badge, { backgroundColor: bg }]}>
                       <Text style={[shared.badgeText, { color: fg }]}>
                         {v.is_verified ? "verified" : "unverified"}
@@ -160,46 +177,50 @@ export default function VendorVerificationScreen() {
                     </View>
                     {v.business_permit_url && (
                       <Pressable
-                        onPress={() => Linking.openURL(v.business_permit_url!)}
+                        accessibilityRole="link"
+                        style={styles.permitLink}
+                        onPress={() => openPermit(v.business_permit_url!)}
                       >
-                        <Text
-                          style={{
-                            color: COLORS.inkNavy,
-                            fontSize: 13,
-                            textDecorationLine: "underline",
-                          }}
-                        >
-                          View permit
-                        </Text>
+                        <Ionicons
+                          name="document-text-outline"
+                          size={13}
+                          color={COLORS.inkNavy}
+                        />
+                        <Text style={styles.permitLinkText}>View permit</Text>
                       </Pressable>
                     )}
                   </View>
                 </View>
                 <View
-                  style={{
-                    flexDirection: "row",
-                    gap: 8,
-                    marginTop: isDesktop ? 0 : 10,
-                  }}
+                  style={[
+                    styles.rowActions,
+                    !isDesktop && styles.rowActionsMobile,
+                  ]}
                 >
                   {v.is_verified ? (
-                    <Pressable
-                      style={shared.dangerOutlineButton}
+                    <PressableButton
+                      style={[shared.dangerOutlineButton, styles.actionButton]}
                       disabled={actingOnId === v.id}
                       onPress={() => setVerified(v.id, false)}
                     >
+                      <Ionicons name="close" size={14} color={COLORS.clay} />
                       <Text style={shared.dangerOutlineButtonText}>
                         Unverify
                       </Text>
-                    </Pressable>
+                    </PressableButton>
                   ) : (
-                    <Pressable
-                      style={shared.successButton}
+                    <PressableButton
+                      style={[shared.successButton, styles.actionButton]}
                       disabled={actingOnId === v.id}
                       onPress={() => setVerified(v.id, true)}
                     >
+                      <Ionicons
+                        name="checkmark"
+                        size={14}
+                        color={COLORS.white}
+                      />
                       <Text style={shared.successButtonText}>Verify</Text>
-                    </Pressable>
+                    </PressableButton>
                   )}
                 </View>
               </View>
@@ -210,3 +231,49 @@ export default function VendorVerificationScreen() {
     </ScrollView>
   );
 }
+
+// Placeholder rows shown while the list is loading.
+function RowsSkeleton() {
+  return (
+    <View style={styles.list}>
+      {[0, 1, 2].map((i) => (
+        <View
+          key={i}
+          style={[shared.row, styles.skeletonBlock, { minHeight: 64 }]}
+        />
+      ))}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  filterRow: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+    marginBottom: Spacing.lg,
+  },
+  filterActive: { backgroundColor: COLORS.inkNavy },
+  filterActiveText: { color: COLORS.white },
+  errorText: { marginBottom: Spacing.md },
+  list: { gap: Spacing.sm },
+  metaRow: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+    alignItems: "center",
+    marginTop: Spacing.sm,
+  },
+  permitLink: { flexDirection: "row", alignItems: "center", gap: 4 },
+  permitLinkText: {
+    color: COLORS.inkNavy,
+    fontSize: Typography.base,
+    textDecorationLine: "underline",
+  },
+  rowActions: { flexDirection: "row", gap: Spacing.sm },
+  rowActionsMobile: { marginTop: Spacing.md },
+  actionButton: { flexDirection: "row", alignItems: "center", gap: Spacing.xs },
+  skeletonBlock: {
+    backgroundColor: COLORS.border,
+    borderColor: COLORS.border,
+    shadowOpacity: 0,
+  },
+});

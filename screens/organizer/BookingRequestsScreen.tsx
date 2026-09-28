@@ -1,17 +1,21 @@
+import { PressableButton } from "@/components/PressableButton";
+import { Spacing } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
 import {
   BREAKPOINT,
   COLORS,
   formatDate,
+  RADIUS,
   shared,
   statusColors,
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
+import { useToast } from "@/lib/toast";
+import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
-  ActivityIndicator,
-  Pressable,
   ScrollView,
+  StyleSheet,
   Text,
   TextInput,
   useWindowDimensions,
@@ -41,6 +45,7 @@ export default function BookingRequestsScreen() {
     loading: venueLoading,
     error: venueError,
   } = useOrganizerVenue();
+  const { showToast } = useToast();
 
   const [filter, setFilter] = useState<Filter>("pending");
   const [search, setSearch] = useState("");
@@ -62,7 +67,10 @@ export default function BookingRequestsScreen() {
 
     if (filter !== "all") query = query.eq("status", filter);
 
-    const { data } = await query;
+    const { data, error } = await query;
+    if (error) {
+      showToast("Couldn't load booking requests.", "error");
+    }
     setRows(
       (data ?? []).map((row: any) => ({
         id: row.id,
@@ -75,10 +83,16 @@ export default function BookingRequestsScreen() {
       })),
     );
     setLoading(false);
-  }, [venue, filter]);
+  }, [venue, filter, showToast]);
 
   useEffect(() => {
-    load();
+    // Wrapped in a local async function rather than calling load()
+    // directly — calling a useCallback'd function that setStates
+    // straight in the effect body trips react-hooks/set-state-in-effect.
+    async function run() {
+      await load();
+    }
+    run();
   }, [load]);
 
   const approve = async (booking: BookingRow) => {
@@ -107,7 +121,14 @@ export default function BookingRequestsScreen() {
     }
 
     setActingOnId(null);
-    if (!error) load();
+    // CHANGED: a failed approve used to just stop the spinner with zero
+    // feedback — the organizer would have no idea it didn't go through.
+    if (error) {
+      showToast(error.message || "Couldn't approve that booking.", "error");
+      return;
+    }
+    showToast("Booking approved.", "success");
+    load();
   };
 
   const reject = async (bookingId: string) => {
@@ -117,14 +138,25 @@ export default function BookingRequestsScreen() {
       .update({ status: "cancelled", decided_at: new Date().toISOString() })
       .eq("id", bookingId);
     setActingOnId(null);
-    if (!error) load();
+    if (error) {
+      showToast(error.message || "Couldn't reject that booking.", "error");
+      return;
+    }
+    showToast("Booking rejected.", "info");
+    load();
   };
 
   if (venueLoading) {
     return (
-      <View style={shared.centerFill}>
-        <ActivityIndicator color={COLORS.inkNavy} />
-      </View>
+      <ScrollView
+        style={shared.screen}
+        contentContainerStyle={[
+          shared.content,
+          isDesktop && shared.contentDesktop,
+        ]}
+      >
+        <BookingRequestsSkeleton />
+      </ScrollView>
     );
   }
   if (venueError) {
@@ -156,52 +188,55 @@ export default function BookingRequestsScreen() {
         vendor to pay.
       </Text>
 
-      <View
-        style={{
-          flexDirection: "row",
-          gap: 8,
-          marginBottom: 12,
-          flexWrap: "wrap",
-        }}
-      >
+      <View style={styles.filterRow}>
         {FILTERS.map((f) => (
-          <Pressable
+          <PressableButton
             key={f}
             onPress={() => setFilter(f)}
             style={[
               shared.secondaryButton,
-              filter === f && { backgroundColor: COLORS.inkNavy },
+              filter === f && styles.filterActive,
             ]}
           >
             <Text
               style={[
                 shared.secondaryButtonText,
-                filter === f && { color: COLORS.white },
+                filter === f && styles.filterActiveText,
               ]}
             >
               {f}
             </Text>
-          </Pressable>
+          </PressableButton>
         ))}
       </View>
 
-      <TextInput
-        style={[shared.input, { marginBottom: 16 }]}
-        placeholder="Search vendor or stall…"
-        value={search}
-        onChangeText={setSearch}
-      />
+      <View style={styles.searchWrap}>
+        <Ionicons
+          name="search"
+          size={16}
+          color={COLORS.slate}
+          style={styles.searchIcon}
+        />
+        <TextInput
+          accessibilityLabel="Search vendor or stall"
+          style={[shared.input, styles.searchInput]}
+          placeholder="Search vendor or stall…"
+          value={search}
+          onChangeText={setSearch}
+        />
+      </View>
 
       {loading ? (
-        <ActivityIndicator color={COLORS.inkNavy} />
+        <RowsSkeleton />
       ) : filtered.length === 0 ? (
         <View style={shared.emptyState}>
-          <Text style={shared.emptyStateText}>
+          <Ionicons name="file-tray-outline" size={26} color={COLORS.slate} />
+          <Text style={[shared.emptyStateText, { marginTop: Spacing.xs }]}>
             No bookings match this filter.
           </Text>
         </View>
       ) : (
-        <View style={{ gap: 10 }}>
+        <View style={styles.list}>
           {filtered.map((b) => {
             const { bg, fg } = statusColors(b.status);
             return (
@@ -219,7 +254,8 @@ export default function BookingRequestsScreen() {
                   <View
                     style={[
                       shared.badge,
-                      { backgroundColor: bg, marginTop: 6 },
+                      styles.statusBadge,
+                      { backgroundColor: bg },
                     ]}
                   >
                     <Text style={[shared.badgeText, { color: fg }]}>
@@ -229,26 +265,31 @@ export default function BookingRequestsScreen() {
                 </View>
                 {b.status === "pending" && (
                   <View
-                    style={{
-                      flexDirection: "row",
-                      gap: 8,
-                      marginTop: isDesktop ? 0 : 10,
-                    }}
+                    style={[
+                      styles.rowActions,
+                      !isDesktop && styles.rowActionsMobile,
+                    ]}
                   >
-                    <Pressable
-                      style={shared.dangerOutlineButton}
+                    <PressableButton
+                      style={[shared.dangerOutlineButton, styles.actionButton]}
                       disabled={actingOnId === b.id}
                       onPress={() => reject(b.id)}
                     >
+                      <Ionicons name="close" size={14} color={COLORS.clay} />
                       <Text style={shared.dangerOutlineButtonText}>Reject</Text>
-                    </Pressable>
-                    <Pressable
-                      style={shared.successButton}
+                    </PressableButton>
+                    <PressableButton
+                      style={[shared.successButton, styles.actionButton]}
                       disabled={actingOnId === b.id}
                       onPress={() => approve(b)}
                     >
+                      <Ionicons
+                        name="checkmark"
+                        size={14}
+                        color={COLORS.white}
+                      />
                       <Text style={shared.successButtonText}>Approve</Text>
-                    </Pressable>
+                    </PressableButton>
                   </View>
                 )}
               </View>
@@ -259,3 +300,66 @@ export default function BookingRequestsScreen() {
     </ScrollView>
   );
 }
+
+// Placeholder shown while the venue is resolving.
+function BookingRequestsSkeleton() {
+  return (
+    <View>
+      <View
+        style={[
+          styles.skeletonLine,
+          { width: 180, height: 22, marginBottom: Spacing.sm },
+        ]}
+      />
+      <View
+        style={[styles.skeletonLine, { width: 260, marginBottom: Spacing.lg }]}
+      />
+      <RowsSkeleton />
+    </View>
+  );
+}
+
+// Placeholder rows shown while the filtered list is loading.
+function RowsSkeleton() {
+  return (
+    <View style={styles.list}>
+      {[0, 1, 2].map((i) => (
+        <View key={i} style={[shared.row, styles.skeletonRow]} />
+      ))}
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  filterRow: {
+    flexDirection: "row",
+    gap: Spacing.sm,
+    marginBottom: Spacing.md,
+    flexWrap: "wrap",
+  },
+  filterActive: { backgroundColor: COLORS.inkNavy },
+  filterActiveText: { color: COLORS.white },
+  searchWrap: {
+    position: "relative",
+    justifyContent: "center",
+    marginBottom: Spacing.lg,
+  },
+  searchIcon: { position: "absolute", left: Spacing.md, zIndex: 1 },
+  searchInput: { paddingLeft: Spacing.xxl },
+  list: { gap: Spacing.sm },
+  statusBadge: { marginTop: Spacing.sm },
+  rowActions: { flexDirection: "row", gap: Spacing.sm },
+  rowActionsMobile: { marginTop: Spacing.md },
+  actionButton: { flexDirection: "row", alignItems: "center", gap: Spacing.xs },
+  skeletonRow: {
+    backgroundColor: COLORS.border,
+    borderColor: COLORS.border,
+    shadowOpacity: 0,
+    minHeight: 64,
+  },
+  skeletonLine: {
+    height: 12,
+    borderRadius: RADIUS.sm,
+    backgroundColor: COLORS.border,
+  },
+});
