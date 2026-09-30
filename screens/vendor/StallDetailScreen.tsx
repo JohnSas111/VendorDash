@@ -17,13 +17,10 @@ type Stall = {
 const DAYS = ["friday", "saturday", "sunday"] as const;
 type Day = (typeof DAYS)[number];
 
-// CHANGED: this used to be the payment window (15 min), set the
-// moment a vendor reserved, going straight to Payment after. Now
-// reserving just starts a longer APPROVAL window — the organizer
-// needs to approve first. The real 15-minute payment window only
-// starts once that happens (set by the organizer's Approve action,
-// not here — see BookingRequestsScreen.tsx / OrganizerHomeScreen.tsx).
-const APPROVAL_WINDOW_HOURS = 24;
+// Reserving only starts an approval request. How long the request is held
+// (24h for unverified vendors, 72h for verified ones) and every booking rule
+// (verification, one stall per market, open-request limits) are enforced by
+// the database function create_booking - not by this screen.
 
 export default function StallDetailScreen() {
   const { stallId, sessionId } = useLocalSearchParams<{
@@ -68,16 +65,23 @@ export default function StallDetailScreen() {
         // stall for this session? If so, don't let them create a second
         // one — send them to wherever that existing one actually is:
         // still waiting on approval, or already cleared to pay.
+        // Vendors get one stall per market, so any live booking for this
+        // session (on this stall or another) goes to that booking instead.
         const { data: existing } = await supabase
           .from("bookings")
-          .select("id, status")
+          .select("id, stall_id")
           .eq("vendor_id", userId)
-          .eq("stall_id", stallId)
           .eq("session_id", sessionId)
-          .in("status", ["pending", "approved"])
+          .not("status", "in", "(cancelled,rejected,expired)")
           .maybeSingle();
 
         if (existing) {
+          if (existing.stall_id !== stallId) {
+            showToast(
+              "You already have a stall for this market. Cancel it first if you want to switch.",
+              "info",
+            );
+          }
           // CHANGED: used to always jump to Payment regardless of
           // status. Now only an already-approved booking goes to
           // Payment — a still-pending one goes to the booking detail
@@ -125,45 +129,25 @@ export default function StallDetailScreen() {
     // the vendor pressing Continue.
     await supabase.rpc("expire_stale_bookings");
 
-    const reservationExpiresAt = new Date(
-      Date.now() + APPROVAL_WINDOW_HOURS * 60 * 60 * 1000,
-    ).toISOString();
+    // create_booking checks that you're allowed to book (profile/permit,
+    // one stall per market, open-request limit, stall and session are valid),
+    // sets the hold, notifies you and records the audit event.
+    const { data: bookingId, error } = await supabase.rpc("create_booking", {
+      p_stall_id: stall.id,
+      p_session_id: sessionId,
+      p_attending_days: selectedDays,
+      p_is_recurring: isRecurring,
+    });
 
-    const { data: booking, error } = await supabase
-      .from("bookings")
-      .insert({
-        vendor_id: userId,
-        stall_id: stall.id,
-        session_id: sessionId,
-        attending_days: selectedDays,
-        is_recurring: isRecurring,
-        status: "pending",
-        reservation_expires_at: reservationExpiresAt,
-      })
-      .select("id")
-      .single();
-
-    if (error) {
+    if (error || !bookingId) {
       setSubmitting(false);
-      if (error.code === "23505") {
-        showToast(
-          "Someone else just booked this stall. Pick a different one.",
-          "error",
-        );
+      showToast(error?.message || "Booking failed.", "error");
+      // 23505 = the stall was taken a moment ago: back to the map to pick another.
+      if (error?.code === "23505") {
         router.replace("/(vendor)/floor-map");
-      } else {
-        showToast(error.message || "Booking failed.", "error");
       }
       return;
     }
-
-    // Let the vendor know their request went in — shows up in Notifications.
-    await supabase.from("notifications").insert({
-      recipient_id: userId,
-      title: "Booking request submitted",
-      body: `Your request for stall ${stall.stall_number} is pending organizer approval.`,
-      type: "booking_submitted",
-    });
 
     setSubmitting(false);
 
@@ -173,7 +157,7 @@ export default function StallDetailScreen() {
     // until then.
     router.push({
       pathname: "/(vendor)/booking-detail",
-      params: { bookingId: booking.id },
+      params: { bookingId: bookingId as string },
     });
   }
 

@@ -22,8 +22,6 @@ import {
   View,
 } from "react-native";
 
-const PAYMENT_WINDOW_MINUTES = 15;
-
 type BookingRow = {
   id: string;
   status: string;
@@ -34,7 +32,13 @@ type BookingRow = {
   stall_number: string;
 };
 
-const FILTERS = ["pending", "approved", "cancelled", "all"] as const;
+const FILTERS = [
+  "pending",
+  "approved",
+  "rejected",
+  "cancelled",
+  "all",
+] as const;
 type Filter = (typeof FILTERS)[number];
 
 export default function BookingRequestsScreen() {
@@ -95,54 +99,43 @@ export default function BookingRequestsScreen() {
     run();
   }, [load]);
 
+  // Approval is enforced by the database function approve_booking: it checks
+  // that this organizer owns the venue, the booking is still pending, the
+  // vendor is verified, and it sets the payment deadline, writes the vendor's
+  // notification and records the audit event in one transaction.
   const approve = async (booking: BookingRow) => {
     setActingOnId(booking.id);
 
-    const paymentDeadline = new Date(
-      Date.now() + PAYMENT_WINDOW_MINUTES * 60 * 1000,
-    ).toISOString();
-
-    const { error } = await supabase
-      .from("bookings")
-      .update({
-        status: "approved",
-        decided_at: new Date().toISOString(),
-        reservation_expires_at: paymentDeadline,
-      })
-      .eq("id", booking.id);
-
-    if (!error) {
-      await supabase.from("notifications").insert({
-        recipient_id: booking.vendor_id,
-        title: "Booking approved!",
-        body: `Stall ${booking.stall_number} is approved — you have ${PAYMENT_WINDOW_MINUTES} minutes to pay before it expires.`,
-        type: "booking_approved",
-      });
-    }
+    const { error } = await supabase.rpc("approve_booking", {
+      p_booking_id: booking.id,
+    });
 
     setActingOnId(null);
-    // CHANGED: a failed approve used to just stop the spinner with zero
-    // feedback — the organizer would have no idea it didn't go through.
     if (error) {
       showToast(error.message || "Couldn't approve that booking.", "error");
+      load();
       return;
     }
-    showToast("Booking approved.", "success");
+    showToast("Booking approved. The vendor has been notified.", "success");
     load();
   };
 
+  // reject_booking moves pending -> rejected and notifies the vendor.
   const reject = async (bookingId: string) => {
     setActingOnId(bookingId);
-    const { error } = await supabase
-      .from("bookings")
-      .update({ status: "cancelled", decided_at: new Date().toISOString() })
-      .eq("id", bookingId);
+
+    const { error } = await supabase.rpc("reject_booking", {
+      p_booking_id: bookingId,
+      p_reason: null,
+    });
+
     setActingOnId(null);
     if (error) {
       showToast(error.message || "Couldn't reject that booking.", "error");
+      load();
       return;
     }
-    showToast("Booking rejected.", "info");
+    showToast("Booking rejected. The vendor has been notified.", "info");
     load();
   };
 
@@ -184,8 +177,8 @@ export default function BookingRequestsScreen() {
     >
       <Text style={shared.title}>Booking Requests</Text>
       <Text style={shared.subtitle}>
-        Approving starts a {PAYMENT_WINDOW_MINUTES}-minute countdown for the
-        vendor to pay.
+        Approving gives the vendor 24 hours to pay (or until the market ends, if
+        that comes sooner).
       </Text>
 
       <View style={styles.filterRow}>

@@ -19,10 +19,27 @@ export const STATUS_STYLES: Record<
   rejected: { bg: Colors.booked, fg: Colors.text, label: "Rejected" },
   cancelled: { bg: Colors.textMuted, fg: Colors.white, label: "Cancelled" },
   checked_in: { bg: Colors.info, fg: Colors.text, label: "Checked in" },
+  // Market day finished (set by the organizer) - sales can now be submitted.
+  completed: { bg: Colors.text, fg: Colors.white, label: "Completed" },
+  // Reservation lapsed without payment.
+  expired: { bg: Colors.textMuted, fg: Colors.white, label: "Expired" },
+  // Paid but never checked in.
+  no_show: { bg: Colors.booked, fg: Colors.text, label: "No-show" },
 };
 
+// An unrecognised status is shown as-is in a neutral pill. It used to fall
+// back to "Pending", which silently mislabelled any newly added status.
+function fallbackStyle(status: string) {
+  const text = status.replace(/_/g, " ");
+  return {
+    bg: Colors.textMuted,
+    fg: Colors.white,
+    label: text.charAt(0).toUpperCase() + text.slice(1),
+  };
+}
+
 export function StatusBadge({ status }: { status: string }) {
-  const info = STATUS_STYLES[status] ?? STATUS_STYLES.pending;
+  const info = STATUS_STYLES[status] ?? fallbackStyle(status);
   return (
     <View style={[styles.badge, { backgroundColor: info.bg }]}>
       <Text style={[styles.text, { color: info.fg }]}>{info.label}</Text>

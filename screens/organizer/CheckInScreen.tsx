@@ -15,6 +15,7 @@ import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
+  Modal,
   ScrollView,
   StyleSheet,
   Text,
@@ -28,9 +29,97 @@ type Row = {
   status: string;
   vendor_name: string;
   stall_number: string;
+  // Checked in AND the vendor's last booked day has already ended. This is a
+  // display hint only - complete_booking re-checks the time on the server.
+  ready: boolean;
+};
+
+type SessionRow = {
+  id: string;
+  friday_date: string;
+  saturday_date: string;
+  sunday_date: string;
+  end_time: string;
+  status: string;
 };
 
 type ScanFeedback = { type: "success" | "error"; message: string } | null;
+
+type ReasonModalState = { kind: "undo" | "early"; row: Row } | null;
+
+// Converts a wall-clock date + time in an IANA timezone to a UTC timestamp.
+// Returns null if the runtime can't do the conversion (then the row is simply
+// treated as "not ready" and the server stays the authority).
+function zonedToUtcMs(
+  dateStr: string,
+  timeStr: string,
+  timeZone: string,
+): number | null {
+  try {
+    const [y, m, d] = dateStr.split("-").map(Number);
+    const [hh, mm, ss] = timeStr.split(":").map(Number);
+    const wall = Date.UTC(y, m - 1, d, hh, mm, ss || 0);
+    const fmt = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    const offsetAt = (utc: number) => {
+      const parts: Record<string, string> = {};
+      fmt.formatToParts(new Date(utc)).forEach((part) => {
+        parts[part.type] = part.value;
+      });
+      return (
+        Date.UTC(
+          Number(parts.year),
+          Number(parts.month) - 1,
+          Number(parts.day),
+          Number(parts.hour),
+          Number(parts.minute),
+          Number(parts.second),
+        ) - utc
+      );
+    };
+    const guess = wall - offsetAt(wall);
+    return wall - offsetAt(guess);
+  } catch {
+    return null;
+  }
+}
+
+// End of the vendor's LAST booked day (that day's date + the session end time).
+function lastDayEndMs(
+  session: SessionRow,
+  attendingDays: string[],
+  timeZone: string,
+): number | null {
+  const date = attendingDays.includes("sunday")
+    ? session.sunday_date
+    : attendingDays.includes("saturday")
+      ? session.saturday_date
+      : attendingDays.includes("friday")
+        ? session.friday_date
+        : null;
+  if (!date) return null;
+  return zonedToUtcMs(date, session.end_time, timeZone);
+}
+
+// Default session: the open one, else the next upcoming one, else the most
+// recent closed one (closed sessions still need their vendors completed).
+function pickDefaultSession(list: SessionRow[]): SessionRow | null {
+  const oldestFirst = [...list].reverse();
+  return (
+    oldestFirst.find((x) => x.status === "open") ??
+    oldestFirst.find((x) => x.status === "upcoming") ??
+    list.find((x) => x.status === "closed") ??
+    null
+  );
+}
 
 export default function CheckInScreen() {
   const { width } = useWindowDimensions();
@@ -47,7 +136,13 @@ export default function CheckInScreen() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [sessionLabel, setSessionLabel] = useState("No active session");
+  const [sessions, setSessions] = useState<SessionRow[]>([]);
+  const [pickedSessionId, setPickedSessionId] = useState<string | null>(null);
+  const [currentSession, setCurrentSession] = useState<SessionRow | null>(null);
   const [actingOnId, setActingOnId] = useState<string | null>(null);
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [reasonModal, setReasonModal] = useState<ReasonModalState>(null);
+  const [reasonText, setReasonText] = useState("");
 
   const [permission, requestPermission] = useCameraPermissions();
   const [scanFeedback, setScanFeedback] = useState<ScanFeedback>(null);
@@ -57,19 +152,24 @@ export default function CheckInScreen() {
     if (!venue) return;
     setLoading(true);
 
-    const { data: sessions, error: sessionError } = await supabase
+    const { data: sessionRows, error: sessionError } = await supabase
       .from("market_sessions")
-      .select("id, friday_date, sunday_date, status")
+      .select("id, friday_date, saturday_date, sunday_date, end_time, status")
       .eq("venue_id", venue.id)
-      .in("status", ["open", "upcoming"])
-      .order("status", { ascending: true })
-      .order("friday_date", { ascending: true })
-      .limit(1);
+      .in("status", ["open", "upcoming", "closed"])
+      .order("friday_date", { ascending: false })
+      .limit(6);
     if (sessionError) {
       showToast("Couldn't load the active session.", "error");
     }
 
-    const session = sessions?.[0];
+    const list = (sessionRows ?? []) as SessionRow[];
+    setSessions(list);
+
+    const session =
+      list.find((x) => x.id === pickedSessionId) ?? pickDefaultSession(list);
+    setCurrentSession(session);
+
     if (!session) {
       setSessionLabel("No active session");
       setRows([]);
@@ -80,28 +180,41 @@ export default function CheckInScreen() {
       `${formatDate(session.friday_date)} – ${formatDate(session.sunday_date)} (${session.status})`,
     );
 
+    const { data: venueRow } = await supabase
+      .from("venues")
+      .select("timezone")
+      .eq("id", venue.id)
+      .single();
+    const timeZone = venueRow?.timezone ?? "Asia/Manila";
+
     const { data, error: rowsError } = await supabase
       .from("bookings")
       .select(
-        "id, status, profiles!bookings_vendor_id_fkey(full_name), stalls!inner(stall_number, venue_id)",
+        "id, status, attending_days, profiles!bookings_vendor_id_fkey(full_name), stalls!inner(stall_number, venue_id)",
       )
       .eq("session_id", session.id)
       .eq("stalls.venue_id", venue.id)
-      .in("status", ["paid", "checked_in"]);
+      .in("status", ["paid", "checked_in", "completed"]);
     if (rowsError) {
       showToast("Couldn't load the check-in list.", "error");
     }
 
+    const nowMs = Date.now();
     setRows(
-      (data ?? []).map((row: any) => ({
-        id: row.id,
-        status: row.status,
-        vendor_name: row.profiles?.full_name ?? "Unknown vendor",
-        stall_number: row.stalls?.stall_number ?? "—",
-      })),
+      (data ?? []).map((row: any) => {
+        const endMs = lastDayEndMs(session, row.attending_days ?? [], timeZone);
+        return {
+          id: row.id,
+          status: row.status,
+          vendor_name: row.profiles?.full_name ?? "Unknown vendor",
+          stall_number: row.stalls?.stall_number ?? "—",
+          ready:
+            row.status === "checked_in" && endMs !== null && nowMs >= endMs,
+        };
+      }),
     );
     setLoading(false);
-  }, [venue, showToast]);
+  }, [venue, pickedSessionId, showToast]);
 
   useEffect(() => {
     // Wrapped in a local async function rather than calling load()
@@ -113,26 +226,118 @@ export default function CheckInScreen() {
     run();
   }, [load]);
 
-  const setCheckedIn = async (id: string, checkedIn: boolean) => {
+  // Check-in is enforced by check_in_booking: organizer owns the venue, the
+  // booking is paid, and it is one of the vendor's booked days within the
+  // opening window. Returns an error message, or null on success.
+  const runCheckIn = async (id: string): Promise<string | null> => {
     setActingOnId(id);
-    const { error } = await supabase
-      .from("bookings")
-      .update({ status: checkedIn ? "checked_in" : "paid" })
-      .eq("id", id);
+    const { error } = await supabase.rpc("check_in_booking", {
+      p_booking_id: id,
+    });
     setActingOnId(null);
-    if (!error) load();
-    return !error;
+    if (error) return error.message || "Check-in failed.";
+    await load();
+    return null;
   };
 
-  // CHANGED: the table's Check In / Undo button used to call
-  // setCheckedIn() and ignore whether it worked — a failed update just
-  // silently did nothing. The scan flow already had its own feedback
-  // banner for this; the table flow had none, so it gets a toast here.
-  const handleTableCheckIn = async (row: Row, checkedIn: boolean) => {
-    const ok = await setCheckedIn(row.id, checkedIn);
-    if (!ok) {
-      showToast(`Couldn't update ${row.vendor_name}'s check-in.`, "error");
+  const handleTableCheckIn = async (row: Row) => {
+    const message = await runCheckIn(row.id);
+    if (message) showToast(message, "error");
+  };
+
+  // complete_booking only accepts checked-in bookings, and only after the
+  // vendor's last booked day has ended (unless completed early with a reason).
+  const handleComplete = async (row: Row) => {
+    if (!row.ready) {
+      setReasonText("");
+      setReasonModal({ kind: "early", row });
+      return;
     }
+    setActingOnId(row.id);
+    const { error } = await supabase.rpc("complete_booking", {
+      p_booking_id: row.id,
+      p_early: false,
+      p_note: null,
+    });
+    setActingOnId(null);
+    if (error) {
+      showToast(error.message || "Couldn't complete that vendor.", "error");
+      load();
+      return;
+    }
+    showToast(
+      `${row.vendor_name} completed. They can now submit sales.`,
+      "success",
+    );
+    load();
+  };
+
+  const handleCompleteAllReady = async () => {
+    if (!currentSession) return;
+    setBulkBusy(true);
+    const { data, error } = await supabase.rpc("complete_ready_bookings", {
+      p_session_id: currentSession.id,
+    });
+    setBulkBusy(false);
+    if (error) {
+      showToast(error.message || "Couldn't complete the vendors.", "error");
+      load();
+      return;
+    }
+    const n = typeof data === "number" ? data : 0;
+    showToast(
+      n === 1
+        ? "1 vendor completed. They can now submit sales."
+        : `${n} vendors completed. They can now submit sales.`,
+      "success",
+    );
+    load();
+  };
+
+  const openUndo = (row: Row) => {
+    setReasonText("");
+    setReasonModal({ kind: "undo", row });
+  };
+
+  const closeReason = () => {
+    setReasonModal(null);
+    setReasonText("");
+  };
+
+  const submitReason = async () => {
+    if (!reasonModal) return;
+    const note = reasonText.trim();
+    if (note.length < 3) {
+      showToast("Add a short reason (at least 3 characters).", "error");
+      return;
+    }
+    const { kind, row } = reasonModal;
+    closeReason();
+    setActingOnId(row.id);
+    const { error } =
+      kind === "undo"
+        ? await supabase.rpc("undo_check_in", {
+            p_booking_id: row.id,
+            p_reason: note,
+          })
+        : await supabase.rpc("complete_booking", {
+            p_booking_id: row.id,
+            p_early: true,
+            p_note: note,
+          });
+    setActingOnId(null);
+    if (error) {
+      showToast(error.message || "That didn't go through.", "error");
+      load();
+      return;
+    }
+    showToast(
+      kind === "undo"
+        ? "Check-in undone."
+        : `${row.vendor_name} completed. They can now submit sales.`,
+      kind === "undo" ? "info" : "success",
+    );
+    load();
   };
 
   const handleBarcodeScanned = async ({ data }: { data: string }) => {
@@ -157,24 +362,23 @@ export default function CheckInScreen() {
       });
       return;
     }
-    if (match.status === "checked_in") {
+    if (match.status === "checked_in" || match.status === "completed") {
       setScanFeedback({
         type: "error",
-        message: `${match.vendor_name} (Stall ${match.stall_number}) is already checked in.`,
+        message: `${match.vendor_name} (Stall ${match.stall_number}) is already ${
+          match.status === "completed" ? "completed" : "checked in"
+        }.`,
       });
       return;
     }
 
-    const ok = await setCheckedIn(match.id, true);
+    const message = await runCheckIn(match.id);
     setScanFeedback(
-      ok
-        ? {
+      message
+        ? { type: "error", message }
+        : {
             type: "success",
             message: `Checked in: ${match.vendor_name} — Stall ${match.stall_number}`,
-          }
-        : {
-            type: "error",
-            message: "Scan matched, but the update failed. Try again.",
           },
     );
   };
@@ -206,7 +410,11 @@ export default function CheckInScreen() {
       r.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
       r.stall_number.toLowerCase().includes(search.toLowerCase()),
   );
-  const checkedInCount = rows.filter((r) => r.status === "checked_in").length;
+  const checkedInCount = rows.filter(
+    (r) => r.status === "checked_in" || r.status === "completed",
+  ).length;
+  const waitingCount = rows.filter((r) => r.status === "paid").length;
+  const readyCount = rows.filter((r) => r.ready).length;
 
   return (
     <ScrollView
@@ -272,6 +480,30 @@ export default function CheckInScreen() {
         </View>
       </View>
 
+      {sessions.length > 1 && (
+        <View style={styles.sessionChips}>
+          {sessions.map((x) => {
+            const active = x.id === currentSession?.id;
+            return (
+              <PressableButton
+                key={x.id}
+                onPress={() => setPickedSessionId(x.id)}
+                style={[shared.secondaryButton, active && styles.chipActive]}
+              >
+                <Text
+                  style={[
+                    shared.secondaryButtonText,
+                    active && styles.chipActiveText,
+                  ]}
+                >
+                  {formatDate(x.friday_date)} · {x.status}
+                </Text>
+              </PressableButton>
+            );
+          })}
+        </View>
+      )}
+
       <View style={styles.statRow}>
         <View style={[shared.card, styles.statCard]}>
           <Text style={styles.statValue}>{rows.length}</Text>
@@ -285,11 +517,31 @@ export default function CheckInScreen() {
         </View>
         <View style={[shared.card, styles.statCard]}>
           <Text style={[styles.statValue, { color: COLORS.amberText }]}>
-            {rows.length - checkedInCount}
+            {waitingCount}
           </Text>
-          <Text style={styles.statLabel}>Pending</Text>
+          <Text style={styles.statLabel}>Not in yet</Text>
         </View>
       </View>
+
+      {readyCount > 0 && (
+        <View style={[shared.card, styles.readyCard]}>
+          <Text style={styles.readyText}>
+            {readyCount === 1
+              ? "1 vendor is ready to complete."
+              : `${readyCount} vendors are ready to complete.`}
+          </Text>
+          <PressableButton
+            style={[shared.successButton, styles.checkInButton]}
+            disabled={bulkBusy}
+            onPress={handleCompleteAllReady}
+          >
+            <Ionicons name="checkmark-done" size={14} color={COLORS.white} />
+            <Text style={shared.successButtonText}>
+              {bulkBusy ? "Completing…" : "Complete all ready"}
+            </Text>
+          </PressableButton>
+        </View>
+      )}
 
       {mode === "scan" ? (
         <View>
@@ -374,14 +626,13 @@ export default function CheckInScreen() {
             <View style={shared.emptyState}>
               <Ionicons name="people-outline" size={26} color={COLORS.slate} />
               <Text style={[shared.emptyStateText, { marginTop: Spacing.xs }]}>
-                Nobody paid &amp; waiting for this session yet.
+                No paid vendors for this session yet.
               </Text>
             </View>
           ) : (
             <View style={styles.list}>
               {filtered.map((r) => {
                 const { bg, fg } = statusColors(r.status);
-                const isIn = r.status === "checked_in";
                 return (
                   <View key={r.id} style={[shared.row, shared.rowDesktop]}>
                     <View>
@@ -396,29 +647,64 @@ export default function CheckInScreen() {
                           {r.status}
                         </Text>
                       </View>
-                      <PressableButton
-                        style={[
-                          isIn ? shared.secondaryButton : shared.successButton,
-                          styles.checkInButton,
-                        ]}
-                        disabled={actingOnId === r.id}
-                        onPress={() => handleTableCheckIn(r, !isIn)}
-                      >
-                        <Ionicons
-                          name={isIn ? "arrow-undo" : "checkmark"}
-                          size={14}
-                          color={isIn ? COLORS.inkNavy : COLORS.white}
-                        />
-                        <Text
-                          style={
-                            isIn
-                              ? shared.secondaryButtonText
-                              : shared.successButtonText
-                          }
+                      {r.status === "paid" && (
+                        <PressableButton
+                          style={[shared.successButton, styles.checkInButton]}
+                          disabled={actingOnId === r.id}
+                          onPress={() => handleTableCheckIn(r)}
                         >
-                          {isIn ? "Undo" : "Check In"}
-                        </Text>
-                      </PressableButton>
+                          <Ionicons
+                            name="checkmark"
+                            size={14}
+                            color={COLORS.white}
+                          />
+                          <Text style={shared.successButtonText}>Check In</Text>
+                        </PressableButton>
+                      )}
+                      {r.status === "checked_in" && (
+                        <>
+                          <PressableButton
+                            style={[
+                              shared.secondaryButton,
+                              styles.checkInButton,
+                            ]}
+                            disabled={actingOnId === r.id}
+                            onPress={() => openUndo(r)}
+                          >
+                            <Ionicons
+                              name="arrow-undo"
+                              size={14}
+                              color={COLORS.inkNavy}
+                            />
+                            <Text style={shared.secondaryButtonText}>Undo</Text>
+                          </PressableButton>
+                          <PressableButton
+                            style={[
+                              r.ready
+                                ? shared.successButton
+                                : shared.secondaryButton,
+                              styles.checkInButton,
+                            ]}
+                            disabled={actingOnId === r.id}
+                            onPress={() => handleComplete(r)}
+                          >
+                            <Ionicons
+                              name="checkmark-done"
+                              size={14}
+                              color={r.ready ? COLORS.white : COLORS.inkNavy}
+                            />
+                            <Text
+                              style={
+                                r.ready
+                                  ? shared.successButtonText
+                                  : shared.secondaryButtonText
+                              }
+                            >
+                              {r.ready ? "Complete" : "Complete early"}
+                            </Text>
+                          </PressableButton>
+                        </>
+                      )}
                     </View>
                   </View>
                 );
@@ -427,6 +713,52 @@ export default function CheckInScreen() {
           )}
         </>
       )}
+      <Modal
+        visible={reasonModal !== null}
+        transparent
+        animationType="fade"
+        onRequestClose={closeReason}
+      >
+        <View style={styles.modalBackdrop}>
+          <View style={[shared.card, styles.modalCard]}>
+            <Text style={shared.rowTitle}>
+              {reasonModal?.kind === "undo"
+                ? "Undo check-in"
+                : "Complete before closing"}
+            </Text>
+            <Text style={[shared.rowSubtitle, styles.modalBody]}>
+              {reasonModal?.kind === "undo"
+                ? `${reasonModal.row.vendor_name} (Stall ${reasonModal.row.stall_number}) will go back to paid. Your reason is saved in the audit log.`
+                : reasonModal
+                  ? `${reasonModal.row.vendor_name}'s booked days haven't ended yet. Completing now lets them submit sales straight away. Add a reason (for example: left early). It is saved in the audit log.`
+                  : ""}
+            </Text>
+            <TextInput
+              accessibilityLabel="Reason"
+              style={[shared.input, styles.modalInput]}
+              placeholder="Reason…"
+              value={reasonText}
+              onChangeText={setReasonText}
+              multiline
+              maxLength={300}
+            />
+            <View style={styles.modalActions}>
+              <PressableButton
+                style={shared.secondaryButton}
+                onPress={closeReason}
+              >
+                <Text style={shared.secondaryButtonText}>Cancel</Text>
+              </PressableButton>
+              <PressableButton
+                style={shared.successButton}
+                onPress={submitReason}
+              >
+                <Text style={shared.successButtonText}>Confirm</Text>
+              </PressableButton>
+            </View>
+          </View>
+        </View>
+      </Modal>
     </ScrollView>
   );
 }
@@ -518,7 +850,53 @@ const styles = StyleSheet.create({
   cameraPromptText: { marginBottom: Spacing.md, marginTop: Spacing.xs },
   searchInput: { marginBottom: Spacing.lg },
   list: { gap: Spacing.sm },
-  rowRight: { flexDirection: "row", gap: Spacing.md, alignItems: "center" },
+  rowRight: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.md,
+    alignItems: "center",
+  },
+  sessionChips: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  chipActive: { backgroundColor: COLORS.inkNavy },
+  chipActiveText: { color: COLORS.white },
+  readyCard: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  readyText: {
+    flex: 1,
+    fontSize: Typography.base,
+    fontWeight: "600",
+    color: COLORS.inkNavy,
+  },
+  modalBackdrop: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.4)",
+    justifyContent: "center",
+    alignItems: "center",
+    padding: Spacing.lg,
+  },
+  modalCard: { width: "100%", maxWidth: 420 },
+  modalBody: { marginVertical: Spacing.sm },
+  modalInput: {
+    minHeight: 80,
+    textAlignVertical: "top",
+    marginBottom: Spacing.md,
+  },
+  modalActions: {
+    flexDirection: "row",
+    justifyContent: "flex-end",
+    gap: Spacing.sm,
+  },
   checkInButton: {
     flexDirection: "row",
     alignItems: "center",

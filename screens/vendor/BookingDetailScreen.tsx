@@ -6,7 +6,7 @@ import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Modal,
   Pressable,
@@ -29,11 +29,27 @@ type BookingDetail = {
   market_sessions: { friday_date: string; sunday_date: string } | null;
 };
 
+// Latest refund request for this booking (refund_requests table).
+type RefundInfo = {
+  status: "requested" | "rejected" | "approved" | "refunded";
+  reason: string;
+  decision_comment: string | null;
+  refund_amount_cents: number | null;
+};
+
+function pesos(cents: number) {
+  return `₱${(cents / 100).toLocaleString("en-US", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  })}`;
+}
+
 export default function BookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const { showToast } = useToast();
 
   const [booking, setBooking] = useState<BookingDetail | null>(null);
+  const [refund, setRefund] = useState<RefundInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [savingRecurring, setSavingRecurring] = useState(false);
@@ -43,32 +59,49 @@ export default function BookingDetailScreen() {
   const [cancelling, setCancelling] = useState(false);
   const [cancelConfirmVisible, setCancelConfirmVisible] = useState(false);
 
-  useEffect(() => {
-    async function load() {
-      if (!bookingId) return;
-      setLoadError(null);
-      const { data, error } = await supabase
-        .from("bookings")
-        .select(
-          "id, status, attending_days, is_recurring, refund_requested, refund_reason, stalls(stall_number, price_per_day_cents), market_sessions(friday_date, sunday_date)",
-        )
-        .eq("id", bookingId)
-        .single();
+  const load = useCallback(async () => {
+    if (!bookingId) return;
+    setLoadError(null);
+    const { data, error } = await supabase
+      .from("bookings")
+      .select(
+        "id, status, attending_days, is_recurring, refund_requested, refund_reason, stalls(stall_number, price_per_day_cents), market_sessions(friday_date, sunday_date)",
+      )
+      .eq("id", bookingId)
+      .single();
 
-      // BUGFIX: this fetch never checked `error` at all — on failure,
-      // `booking` stayed null, and since the render below returns the
-      // loading spinner whenever `!booking`, the screen showed an
-      // infinite spinner instead of an error state.
-      if (error || !data) {
-        setLoadError("Couldn't load this booking.");
-        setLoading(false);
-        return;
-      }
-      setBooking(data as unknown as BookingDetail);
+    // BUGFIX: this fetch never checked `error` at all — on failure,
+    // `booking` stayed null, and since the render below returns the
+    // loading spinner whenever `!booking`, the screen showed an
+    // infinite spinner instead of an error state.
+    if (error || !data) {
+      setLoadError("Couldn't load this booking.");
       setLoading(false);
+      return;
     }
-    load();
+    setBooking(data as unknown as BookingDetail);
+
+    // Latest refund request, if any (vendors can only read their own).
+    const { data: refundRows } = await supabase
+      .from("refund_requests")
+      .select("status, reason, decision_comment, refund_amount_cents")
+      .eq("booking_id", bookingId)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    setRefund((refundRows?.[0] as RefundInfo | undefined) ?? null);
+
+    setLoading(false);
   }, [bookingId]);
+
+  useEffect(() => {
+    // Wrapped in a local async function rather than calling load()
+    // directly — calling a useCallback'd function that setStates
+    // straight in the effect body trips react-hooks/set-state-in-effect.
+    async function run() {
+      await load();
+    }
+    run();
+  }, [load]);
 
   async function handleToggleRecurring(next: boolean) {
     if (!booking) return;
@@ -111,36 +144,26 @@ export default function BookingDetailScreen() {
       return;
     }
 
+    // request_refund checks that this is your paid booking, that nothing is
+    // already open, and records the request for the organizer.
     setRequestingRefund(true);
-    const { data: updated, error } = await supabase
-      .from("bookings")
-      .update({ refund_requested: true, refund_reason: refundReason.trim() })
-      .eq("id", booking.id)
-      .select();
+    const { error } = await supabase.rpc("request_refund", {
+      p_booking_id: booking.id,
+      p_reason: refundReason.trim(),
+    });
     setRequestingRefund(false);
 
     if (error) {
-      showToast(error.message, "error");
-      return;
-    }
-    if (!updated || updated.length === 0) {
-      showToast(
-        "That didn't go through — a permissions rule likely blocked it. Nothing was saved.",
-        "error",
-      );
+      showToast(error.message || "Couldn't send the request.", "error");
       return;
     }
 
-    setBooking({
-      ...booking,
-      refund_requested: true,
-      refund_reason: refundReason.trim(),
-    });
     setRefundModalOpen(false);
     showToast(
-      "Refund requested — the organizer will process it manually.",
+      "Refund requested — the organizer will review it and let you know.",
       "success",
     );
+    await load();
   }
 
   function handleCancelReservation() {
@@ -151,23 +174,16 @@ export default function BookingDetailScreen() {
     if (!booking) return;
     setCancelConfirmVisible(false);
 
+    // cancel_booking only accepts your own pending/approved reservation and
+    // refuses while a payment for it is in progress.
     setCancelling(true);
-    const { data: updated, error } = await supabase
-      .from("bookings")
-      .update({ status: "cancelled" })
-      .eq("id", booking.id)
-      .select();
+    const { error } = await supabase.rpc("cancel_booking", {
+      p_booking_id: booking.id,
+    });
     setCancelling(false);
 
     if (error) {
-      showToast(error.message, "error");
-      return;
-    }
-    if (!updated || updated.length === 0) {
-      showToast(
-        "That didn't go through — a permissions rule likely blocked it. Nothing was saved.",
-        "error",
-      );
+      showToast(error.message || "Couldn't cancel that reservation.", "error");
       return;
     }
 
@@ -251,8 +267,8 @@ export default function BookingDetailScreen() {
           <Ionicons name="time-outline" size={20} color={Colors.textMuted} />
           <Text style={styles.pendingText}>
             Waiting on the organizer to approve this reservation. You’ll be
-            notified once they do — you’ll then have 15 minutes to pay before it
-            expires.
+            notified once they do — you’ll then have up to 24 hours to pay
+            before it expires.
           </Text>
         </View>
       )}
@@ -329,23 +345,68 @@ export default function BookingDetailScreen() {
         </Pressable>
       )}
 
-      {booking.status === "paid" && (
-        <View style={styles.refundCard}>
-          {booking.refund_requested ? (
-            <Text style={styles.refundPendingText}>
-              Refund requested — waiting on the organizer to process it.
-            </Text>
-          ) : (
+      {refund?.status === "requested" && (
+        <View style={[styles.pendingCard, { marginTop: Spacing.md }]}>
+          <Ionicons name="time-outline" size={20} color={Colors.textMuted} />
+          <Text style={styles.pendingText}>
+            Refund requested — waiting on the organizer’s decision.
+          </Text>
+        </View>
+      )}
+
+      {refund?.status === "approved" && (
+        <View style={[styles.approvedCard, { marginTop: Spacing.md }]}>
+          <Ionicons
+            name="checkmark-circle"
+            size={22}
+            color={Colors.available}
+          />
+          <Text style={styles.approvedText}>
+            Your refund was approved. Please bring a valid ID to the organizer
+            to receive it.
+          </Text>
+        </View>
+      )}
+
+      {refund?.status === "refunded" && (
+        <View style={[styles.pendingCard, { marginTop: Spacing.md }]}>
+          <Ionicons
+            name="checkmark-done-outline"
+            size={20}
+            color={Colors.textMuted}
+          />
+          <Text style={styles.pendingText}>
+            Your refund
+            {refund.refund_amount_cents != null
+              ? ` of ${pesos(refund.refund_amount_cents)}`
+              : ""}{" "}
+            was paid out.
+          </Text>
+        </View>
+      )}
+
+      {booking.status === "paid" &&
+        (!refund || refund.status === "rejected") && (
+          <View style={styles.refundCard}>
+            {refund?.status === "rejected" && (
+              <Text style={styles.refundDeclinedText}>
+                Your last refund request was declined
+                {refund.decision_comment ? `: ${refund.decision_comment}` : "."}
+              </Text>
+            )}
             <Pressable
               accessibilityRole="button"
               onPress={handleRequestRefund}
               style={styles.refundButton}
             >
-              <Text style={styles.refundButtonText}>Request a refund</Text>
+              <Text style={styles.refundButtonText}>
+                {refund?.status === "rejected"
+                  ? "Request a refund again"
+                  : "Request a refund"}
+              </Text>
             </Pressable>
-          )}
-        </View>
-      )}
+          </View>
+        )}
 
       <Modal
         visible={refundModalOpen}
@@ -357,8 +418,9 @@ export default function BookingDetailScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Request a refund</Text>
             <Text style={styles.modalHint}>
-              The organizer will review this and process your refund manually —
-              this doesn’t cancel your stall automatically.
+              The organizer will review your request. If it’s approved, your
+              booking is cancelled and you collect the refund in person by
+              showing a valid ID.
             </Text>
             <Text style={styles.modalLabel}>Reason</Text>
             <TextInput
@@ -573,6 +635,13 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
     color: Colors.textMuted,
     textAlign: "center",
+  },
+  refundDeclinedText: {
+    fontSize: Typography.sm,
+    color: Colors.textMuted,
+    textAlign: "center",
+    marginBottom: Spacing.md,
+    lineHeight: 17,
   },
   cancelButton: {
     borderWidth: 1,

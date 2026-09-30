@@ -167,39 +167,16 @@ export default function OrganizerHomeScreen() {
     load();
   };
 
+  // Approval is enforced by the database function approve_booking: it checks
+  // that this organizer owns the venue, the booking is still pending, the
+  // vendor is verified, and it sets the payment deadline, notifies the vendor
+  // and records the audit event in one transaction.
   const handleApprove = async (bookingId: string) => {
     setActingOnId(bookingId);
-    const target = data?.pendingBookings.find((b) => b.id === bookingId);
-    const paymentDeadline = new Date(Date.now() + 15 * 60 * 1000).toISOString();
 
-    const { error } = await supabase
-      .from("bookings")
-      .update({
-        status: "approved",
-        decided_at: new Date().toISOString(),
-        reservation_expires_at: paymentDeadline,
-      })
-      .eq("id", bookingId);
-
-    if (!error && target) {
-      // We only have this booking's vendor_name here, not vendor_id —
-      // the dashboard's summary query doesn't select it. Fetch it
-      // just for the notification rather than widening the main
-      // query for a field only needed on this one action.
-      const { data: vendorRow } = await supabase
-        .from("bookings")
-        .select("vendor_id")
-        .eq("id", bookingId)
-        .single();
-      if (vendorRow?.vendor_id) {
-        await supabase.from("notifications").insert({
-          recipient_id: vendorRow.vendor_id,
-          title: "Booking approved!",
-          body: `Stall ${target.stall_number} is approved — you have 15 minutes to pay before it expires.`,
-          type: "booking_approved",
-        });
-      }
-    }
+    const { error } = await supabase.rpc("approve_booking", {
+      p_booking_id: bookingId,
+    });
 
     setActingOnId(null);
     if (error) {
@@ -208,24 +185,29 @@ export default function OrganizerHomeScreen() {
       // than the persistent errorMsg banner (that's reserved for the
       // initial load failing).
       showToast(error.message || "Couldn't approve that booking.", "error");
+      load();
       return;
     }
-    showToast("Booking approved.", "success");
+    showToast("Booking approved. The vendor has been notified.", "success");
     load();
   };
 
+  // reject_booking moves pending -> rejected and notifies the vendor.
   const handleReject = async (bookingId: string) => {
     setActingOnId(bookingId);
-    const { error } = await supabase
-      .from("bookings")
-      .update({ status: "cancelled", decided_at: new Date().toISOString() })
-      .eq("id", bookingId);
+
+    const { error } = await supabase.rpc("reject_booking", {
+      p_booking_id: bookingId,
+      p_reason: null,
+    });
+
     setActingOnId(null);
     if (error) {
       showToast(error.message || "Couldn't reject that booking.", "error");
+      load();
       return;
     }
-    showToast("Booking rejected.", "info");
+    showToast("Booking rejected. The vendor has been notified.", "info");
     load();
   };
 
