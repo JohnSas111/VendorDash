@@ -12,6 +12,7 @@ import {
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
+import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   ScrollView,
@@ -29,6 +30,8 @@ type BookingRow = {
   attending_days: string[];
   vendor_id: string;
   vendor_name: string;
+  // Only verified vendors can be approved (approve_booking enforces this).
+  vendor_verified: boolean;
   stall_number: string;
 };
 
@@ -50,6 +53,7 @@ export default function BookingRequestsScreen() {
     error: venueError,
   } = useOrganizerVenue();
   const { showToast } = useToast();
+  const router = useRouter();
 
   const [filter, setFilter] = useState<Filter>("pending");
   const [search, setSearch] = useState("");
@@ -61,10 +65,12 @@ export default function BookingRequestsScreen() {
     if (!venue) return;
     setLoading(true);
 
+    // vendor_details links to profiles twice (its own id, and verified_by),
+    // so the embed must name the link: vendor_details_id_fkey.
     let query = supabase
       .from("bookings")
       .select(
-        "id, status, requested_at, attending_days, vendor_id, profiles!bookings_vendor_id_fkey(full_name), stalls!inner(stall_number, venue_id)",
+        "id, status, requested_at, attending_days, vendor_id, profiles!bookings_vendor_id_fkey(full_name, vendor_details!vendor_details_id_fkey(is_verified)), stalls!inner(stall_number, venue_id)",
       )
       .eq("stalls.venue_id", venue.id)
       .order("requested_at", { ascending: false });
@@ -76,15 +82,22 @@ export default function BookingRequestsScreen() {
       showToast("Couldn't load booking requests.", "error");
     }
     setRows(
-      (data ?? []).map((row: any) => ({
-        id: row.id,
-        status: row.status,
-        requested_at: row.requested_at,
-        attending_days: row.attending_days ?? [],
-        vendor_id: row.vendor_id,
-        vendor_name: row.profiles?.full_name ?? "Unknown vendor",
-        stall_number: row.stalls?.stall_number ?? "—",
-      })),
+      (data ?? []).map((row: any) => {
+        const details = Array.isArray(row.profiles?.vendor_details)
+          ? row.profiles.vendor_details[0]
+          : row.profiles?.vendor_details;
+        return {
+          id: row.id,
+          status: row.status,
+          requested_at: row.requested_at,
+          attending_days: row.attending_days ?? [],
+          vendor_id: row.vendor_id,
+          vendor_name: row.profiles?.full_name ?? "Unknown vendor",
+          // Missing details count as NOT verified (safe default).
+          vendor_verified: details?.is_verified === true,
+          stall_number: row.stalls?.stall_number ?? "—",
+        };
+      }),
     );
     setLoading(false);
   }, [venue, filter, showToast]);
@@ -178,7 +191,9 @@ export default function BookingRequestsScreen() {
       <Text style={shared.title}>Booking Requests</Text>
       <Text style={shared.subtitle}>
         Approving gives the vendor 24 hours to pay (or until the market ends, if
-        that comes sooner).
+        that comes sooner). Vendors must be verified before you can approve
+        them; requests from unverified vendors expire after 24 hours instead of
+        72.
       </Text>
 
       <View style={styles.filterRow}>
@@ -232,6 +247,9 @@ export default function BookingRequestsScreen() {
         <View style={styles.list}>
           {filtered.map((b) => {
             const { bg, fg } = statusColors(b.status);
+            const needsVerification =
+              b.status === "pending" && !b.vendor_verified;
+            const unverifiedColors = statusColors("unverified");
             return (
               <View
                 key={b.id}
@@ -244,16 +262,29 @@ export default function BookingRequestsScreen() {
                     {b.attending_days.join(", ") || "no days set"} · requested{" "}
                     {formatDate(b.requested_at)}
                   </Text>
-                  <View
-                    style={[
-                      shared.badge,
-                      styles.statusBadge,
-                      { backgroundColor: bg },
-                    ]}
-                  >
-                    <Text style={[shared.badgeText, { color: fg }]}>
-                      {b.status}
-                    </Text>
+                  <View style={styles.badgeRow}>
+                    <View style={[shared.badge, { backgroundColor: bg }]}>
+                      <Text style={[shared.badgeText, { color: fg }]}>
+                        {b.status}
+                      </Text>
+                    </View>
+                    {needsVerification && (
+                      <View
+                        style={[
+                          shared.badge,
+                          { backgroundColor: unverifiedColors.bg },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            shared.badgeText,
+                            { color: unverifiedColors.fg },
+                          ]}
+                        >
+                          Unverified
+                        </Text>
+                      </View>
+                    )}
                   </View>
                 </View>
                 {b.status === "pending" && (
@@ -271,18 +302,38 @@ export default function BookingRequestsScreen() {
                       <Ionicons name="close" size={14} color={COLORS.clay} />
                       <Text style={shared.dangerOutlineButtonText}>Reject</Text>
                     </PressableButton>
-                    <PressableButton
-                      style={[shared.successButton, styles.actionButton]}
-                      disabled={actingOnId === b.id}
-                      onPress={() => approve(b)}
-                    >
-                      <Ionicons
-                        name="checkmark"
-                        size={14}
-                        color={COLORS.white}
-                      />
-                      <Text style={shared.successButtonText}>Approve</Text>
-                    </PressableButton>
+                    {b.vendor_verified ? (
+                      <PressableButton
+                        style={[shared.successButton, styles.actionButton]}
+                        disabled={actingOnId === b.id}
+                        onPress={() => approve(b)}
+                      >
+                        <Ionicons
+                          name="checkmark"
+                          size={14}
+                          color={COLORS.white}
+                        />
+                        <Text style={shared.successButtonText}>Approve</Text>
+                      </PressableButton>
+                    ) : (
+                      // Approving is refused for unverified vendors, so send
+                      // the organizer to Vendor Verification instead.
+                      <PressableButton
+                        style={[shared.secondaryButton, styles.actionButton]}
+                        onPress={() =>
+                          router.push("/vendor-verification" as any)
+                        }
+                      >
+                        <Ionicons
+                          name="shield-checkmark-outline"
+                          size={14}
+                          color={COLORS.inkNavy}
+                        />
+                        <Text style={shared.secondaryButtonText}>
+                          Verify vendor
+                        </Text>
+                      </PressableButton>
+                    )}
                   </View>
                 )}
               </View>
@@ -340,7 +391,12 @@ const styles = StyleSheet.create({
   searchIcon: { position: "absolute", left: Spacing.md, zIndex: 1 },
   searchInput: { paddingLeft: Spacing.xxl },
   list: { gap: Spacing.sm },
-  statusBadge: { marginTop: Spacing.sm },
+  badgeRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
   rowActions: { flexDirection: "row", gap: Spacing.sm },
   rowActionsMobile: { marginTop: Spacing.md },
   actionButton: { flexDirection: "row", alignItems: "center", gap: Spacing.xs },

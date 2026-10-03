@@ -60,14 +60,20 @@ export default function PaymentScreen() {
     if (!bookingId) return;
     setProcessing(true);
 
+    // The server works out the amount itself (price x days + fee). The total
+    // shown above is only a preview and is NOT sent.
     const { data, error } = await supabase.functions.invoke("create-payment", {
-      body: { bookingId, amountCents: total, method },
+      body: { bookingId, method },
     });
 
     if (error || !data?.checkoutUrl) {
       setProcessing(false);
+      // data.error carries the server's reason (for example "The payment
+      // deadline for this booking has passed."); error is a network failure.
       showToast(
-        error?.message ?? "Payment setup failed. Please try again.",
+        data?.error ??
+          error?.message ??
+          "Payment setup failed. Please try again.",
         "error",
       );
       return;

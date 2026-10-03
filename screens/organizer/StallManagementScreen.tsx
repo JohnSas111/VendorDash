@@ -33,6 +33,23 @@ type Stall = {
   is_active: boolean;
 };
 
+// Limits mirror what the payment code can handle: payment_quote refuses a
+// stall with no valid price, and an absurd price would only be a typo.
+const MAX_PRICE_PESOS = 100_000;
+const MAX_STALL_NUMBER_LENGTH = 20;
+const MAX_SIZE_LENGTH = 50;
+// A stall with a booking in one of these states is in use right now.
+const ACTIVE_BOOKING_STATUSES = ["pending", "approved", "paid", "checked_in"];
+
+// Strict peso amount: digits with an optional 1-2 decimals ("₱1,200.50" is
+// fine). parseFloat used to accept "12abc" as 12 and allowed a price of 0.
+function parsePriceToCents(text: string): number | null {
+  const cleaned = text.replace(/[₱,\s]/g, "");
+  if (!/^\d+(\.\d{1,2})?$/.test(cleaned)) return null;
+  const cents = Math.round(parseFloat(cleaned) * 100);
+  return cents > 0 && cents <= MAX_PRICE_PESOS * 100 ? cents : null;
+}
+
 export default function StallManagementScreen() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= BREAKPOINT;
@@ -47,6 +64,8 @@ export default function StallManagementScreen() {
   const [bookingCounts, setBookingCounts] = useState<Record<string, number>>(
     {},
   );
+  // Bookings that are live right now (pending/approved/paid/checked in).
+  const [activeCounts, setActiveCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [modalOpen, setModalOpen] = useState(false);
   const [editing, setEditing] = useState<Stall | null>(null);
@@ -74,18 +93,24 @@ export default function StallManagementScreen() {
     if (ids.length > 0) {
       const { data: bookingRows, error: bookingError } = await supabase
         .from("bookings")
-        .select("stall_id")
+        .select("stall_id, status")
         .in("stall_id", ids);
       if (bookingError) {
         showToast("Couldn't load booking history for stalls.", "error");
       }
       const counts: Record<string, number> = {};
+      const active: Record<string, number> = {};
       (bookingRows ?? []).forEach((b: any) => {
         counts[b.stall_id] = (counts[b.stall_id] ?? 0) + 1;
+        if (ACTIVE_BOOKING_STATUSES.includes(b.status)) {
+          active[b.stall_id] = (active[b.stall_id] ?? 0) + 1;
+        }
       });
       setBookingCounts(counts);
+      setActiveCounts(active);
     } else {
       setBookingCounts({});
+      setActiveCounts({});
     }
 
     setLoading(false);
@@ -119,51 +144,99 @@ export default function StallManagementScreen() {
 
   const save = async () => {
     if (!venue) return;
-    const priceCents = Math.round(parseFloat(form.price || "0") * 100);
-    if (!form.stall_number.trim() || Number.isNaN(priceCents)) {
-      showToast("Stall number and a valid price are required.", "error");
+    const stallNumber = form.stall_number.trim();
+    const size = form.size.trim();
+    const priceCents = parsePriceToCents(form.price);
+
+    if (!stallNumber) {
+      showToast("Enter a stall number.", "error");
       return;
     }
-    setSaving(true);
-    if (editing) {
-      const { error } = await supabase
-        .from("stalls")
-        .update({
-          stall_number: form.stall_number.trim(),
-          size: form.size.trim() || null,
-          price_per_day_cents: priceCents,
-        })
-        .eq("id", editing.id);
-      if (error) {
-        showToast(error.message, "error");
-      } else {
-        showToast("Stall updated.", "success");
-      }
-    } else {
-      const { error } = await supabase.from("stalls").insert({
-        venue_id: venue.id,
-        stall_number: form.stall_number.trim(),
-        size: form.size.trim() || null,
-        price_per_day_cents: priceCents,
-      });
-      if (error) {
-        showToast(error.message, "error");
-      } else {
-        showToast("Stall added.", "success");
-      }
+    if (stallNumber.length > MAX_STALL_NUMBER_LENGTH) {
+      showToast(
+        `Stall number is too long (${MAX_STALL_NUMBER_LENGTH} characters max).`,
+        "error",
+      );
+      return;
     }
+    if (size.length > MAX_SIZE_LENGTH) {
+      showToast(
+        `Size is too long (${MAX_SIZE_LENGTH} characters max).`,
+        "error",
+      );
+      return;
+    }
+    if (priceCents === null) {
+      showToast(
+        `Enter a price per day between ₱1 and ₱${MAX_PRICE_PESOS.toLocaleString()}.`,
+        "error",
+      );
+      return;
+    }
+
+    setSaving(true);
+    // .select("id") returns the rows that really changed. Without it a
+    // save blocked by the database's rules looked like success.
+    const result = editing
+      ? await supabase
+          .from("stalls")
+          .update({
+            stall_number: stallNumber,
+            size: size || null,
+            price_per_day_cents: priceCents,
+          })
+          .eq("id", editing.id)
+          .select("id")
+      : await supabase
+          .from("stalls")
+          .insert({
+            venue_id: venue.id,
+            stall_number: stallNumber,
+            size: size || null,
+            price_per_day_cents: priceCents,
+          })
+          .select("id");
     setSaving(false);
+
+    if (result.error) {
+      // 23505 = a stall with this number already exists at this venue.
+      showToast(
+        result.error.code === "23505"
+          ? `Stall ${stallNumber} already exists at this venue.`
+          : result.error.message,
+        "error",
+      );
+      return; // keep the form open so nothing typed is lost
+    }
+    if (!result.data || result.data.length === 0) {
+      showToast("Couldn't save. The stall was not changed.", "error");
+      return;
+    }
+
+    showToast(editing ? "Stall updated." : "Stall added.", "success");
     setModalOpen(false);
     load();
   };
 
   const toggleActive = async (stall: Stall) => {
-    const { error } = await supabase
+    // Deactivating removes the stall from the vendors' floor map, including
+    // for the vendor who holds it. So refuse while it is in use.
+    if (stall.is_active && (activeCounts[stall.id] ?? 0) > 0) {
+      showToast(
+        `Stall ${stall.stall_number} has an active booking. Cancel or complete it first.`,
+        "error",
+      );
+      return;
+    }
+    const { data, error } = await supabase
       .from("stalls")
       .update({ is_active: !stall.is_active })
-      .eq("id", stall.id);
+      .eq("id", stall.id)
+      .select("id");
     if (error) {
       showToast(error.message, "error");
+    } else if (!data || data.length === 0) {
+      showToast("Couldn't update this stall.", "error");
     }
     load();
   };
@@ -178,9 +251,23 @@ export default function StallManagementScreen() {
     if (!stall) return;
     setPendingDelete(null);
 
-    const { error } = await supabase.from("stalls").delete().eq("id", stall.id);
+    // .select("id") returns the rows really deleted, so "Stall deleted" is
+    // only shown when something was. Deleting is allowed for the venue's own
+    // organizer, and the database refuses a stall that has booking history.
+    const { data, error } = await supabase
+      .from("stalls")
+      .delete()
+      .eq("id", stall.id)
+      .select("id");
     if (error) {
-      showToast(error.message, "error");
+      showToast(
+        error.code === "23503"
+          ? "This stall has booking history, so it can't be deleted. Deactivate it instead."
+          : error.message,
+        "error",
+      );
+    } else if (!data || data.length === 0) {
+      showToast("Couldn't delete this stall.", "error");
     } else {
       showToast("Stall deleted.", "info");
     }

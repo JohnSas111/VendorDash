@@ -25,21 +25,108 @@ type BookingRow = {
     friday_date: string;
     sunday_date: string;
     booking_deadline: string | null;
+    venues: { timezone: string | null } | null;
   } | null;
-  payments: { amount_cents: number }[] | null;
+  payments: { amount_cents: number; status: string }[] | null;
   sales_submissions: { id: string }[] | null;
+  refund_requests: { status: string; created_at: string }[] | null;
 };
 
+// A booking is "upcoming" only while it is still in play AND its market has
+// not finished. Everything else (completed, cancelled, rejected, expired,
+// no-show, or a market that is over) belongs in History.
+const ACTIVE_STATUSES = ["pending", "approved", "paid", "checked_in"];
+
+function two(n: number) {
+  return String(n).padStart(2, "0");
+}
+
+// Today's date (YYYY-MM-DD) in the venue's timezone (device date as a
+// fallback). Dates are compared as plain text, so a market that is on today
+// is never treated as already over.
+function todayIn(timeZone: string): string {
+  try {
+    const parts = new Intl.DateTimeFormat("en-US", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    }).formatToParts(new Date());
+    const get = (type: string) =>
+      parts.find((p) => p.type === type)?.value ?? "";
+    return `${get("year")}-${get("month")}-${get("day")}`;
+  } catch {
+    const d = new Date();
+    return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
+  }
+}
+
+function isUpcoming(booking: BookingRow): boolean {
+  if (!ACTIVE_STATUSES.includes(booking.status)) return false;
+  const session = booking.market_sessions;
+  if (!session) return false;
+  const timezone = session.venues?.timezone ?? "Asia/Manila";
+  return session.sunday_date >= todayIn(timezone);
+}
+
+// The newest refund request for a booking, as a short line for the card.
+function refundNote(booking: BookingRow): string | null {
+  const latest = [...(booking.refund_requests ?? [])].sort((a, b) =>
+    b.created_at.localeCompare(a.created_at),
+  )[0];
+  switch (latest?.status) {
+    case "requested":
+      return "Refund requested — waiting on the organizer.";
+    case "approved":
+      return "Refund approved — bring a valid ID to the organizer.";
+    case "refunded":
+      return "Refund paid out.";
+    case "rejected":
+      return "Refund request declined — open the booking to see why.";
+    default:
+      return null;
+  }
+}
+
+// Short line under the date on an upcoming card. It used to say
+// "tap for QR check-in" for every status, even before payment.
+function upcomingHint(status: string): string {
+  switch (status) {
+    case "pending":
+      return "waiting for organizer approval";
+    case "approved":
+      return "approved · tap to pay";
+    case "paid":
+      return "paid · tap for QR check-in";
+    case "checked_in":
+      return "checked in · tap for details";
+    default:
+      return "tap for details";
+  }
+}
+
+// "2026-10-02" is read as a plain calendar date. new Date("2026-10-02") means
+// midnight UTC, which shows the day before on a device behind UTC, and the old
+// "Sep 29-4" label was ambiguous when a weekend crosses a month.
 function formatDateRange(friday: string, sunday: string) {
-  const f = new Date(friday);
-  const s = new Date(sunday);
+  const [fy, fm, fd] = friday.split("-").map(Number);
+  const [sy, sm, sd] = sunday.split("-").map(Number);
+  if (!fy || !fm || !fd || !sy || !sm || !sd) return `${friday} – ${sunday}`;
+  const f = new Date(fy, fm - 1, fd);
+  const s = new Date(sy, sm - 1, sd);
   const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-  return `${f.toLocaleDateString("en-US", opts)}-${s.getDate()}`;
+  // Same month: "Oct 2–4". Across months: "Sep 29 – Oct 4".
+  if (fm === sm && fy === sy) {
+    return `${f.toLocaleDateString("en-US", opts)}–${sd}`;
+  }
+  return `${f.toLocaleDateString("en-US", opts)} – ${s.toLocaleDateString("en-US", opts)}`;
 }
 
 function canCancel(booking: BookingRow): boolean {
-  // Matches the bookings RLS policy: vendors may cancel while a booking is
-  // still pending or approved — i.e. any time before it's actually paid.
+  // Vendors may cancel while a booking is still pending or approved — i.e.
+  // before it is paid. The database function cancel_booking enforces this
+  // (plus "no payment in progress"); this only decides whether to show the
+  // button.
   if (!["pending", "approved"].includes(booking.status)) return false;
   const deadline = booking.market_sessions?.booking_deadline;
   if (!deadline) return true;
@@ -69,7 +156,7 @@ export default function MyBookingsScreen() {
     const { data, error } = await supabase
       .from("bookings")
       .select(
-        "id, status, attending_days, stalls(stall_number), market_sessions(friday_date, sunday_date, booking_deadline), payments(amount_cents), sales_submissions(id)",
+        "id, status, attending_days, stalls(stall_number), market_sessions(friday_date, sunday_date, booking_deadline, venues(timezone)), payments(amount_cents, status), sales_submissions(id), refund_requests(status, created_at)",
       )
       .eq("vendor_id", userId)
       .order("requested_at", { ascending: false });
@@ -104,10 +191,12 @@ export default function MyBookingsScreen() {
     if (!booking) return;
     setPendingCancel(null);
     setCancellingId(booking.id);
-    const { error } = await supabase
-      .from("bookings")
-      .update({ status: "cancelled" })
-      .eq("id", booking.id);
+    // cancel_booking checks that this is your own pending/approved
+    // reservation and that no payment is in progress, then cancels it and
+    // records the audit event.
+    const { error } = await supabase.rpc("cancel_booking", {
+      p_booking_id: booking.id,
+    });
     setCancellingId(null);
 
     if (error) {
@@ -118,18 +207,16 @@ export default function MyBookingsScreen() {
     loadData();
   }
 
-  const today = new Date();
-  const upcoming = bookings.filter(
-    (b) =>
-      b.market_sessions && new Date(b.market_sessions.sunday_date) >= today,
-  );
-  const history = bookings.filter(
-    (b) =>
-      !b.market_sessions || new Date(b.market_sessions.sunday_date) < today,
-  );
+  const upcoming = bookings.filter(isUpcoming);
+  const history = bookings.filter((b) => !isUpcoming(b));
 
+  // Only money that was actually paid counts. Pending, failed and refunded
+  // payment rows used to be added in as well.
   const totalSpent = bookings.reduce((sum, b) => {
-    const paid = b.payments?.reduce((s, p) => s + p.amount_cents, 0) ?? 0;
+    const paid =
+      b.payments
+        ?.filter((p) => p.status === "paid")
+        .reduce((s, p) => s + p.amount_cents, 0) ?? 0;
     return sum + paid;
   }, 0);
 
@@ -178,8 +265,12 @@ export default function MyBookingsScreen() {
             <StatusBadge status={item.status} />
           </View>
           <Text style={styles.cardSubtitle}>
-            Stall {item.stalls?.stall_number ?? "—"} · tap for QR check-in
+            Stall {item.stalls?.stall_number ?? "—"} ·{" "}
+            {upcomingHint(item.status)}
           </Text>
+          {refundNote(item) && (
+            <Text style={styles.refundNote}>{refundNote(item)}</Text>
+          )}
         </TouchableOpacity>
 
         {showCancel && (
@@ -209,7 +300,11 @@ export default function MyBookingsScreen() {
       ?.map((d) => d.charAt(0).toUpperCase() + d.slice(1, 3))
       .join(", ");
     const hasSalesSubmission = (item.sales_submissions?.length ?? 0) > 0;
-    const wasPaid = item.status === "paid" || item.status === "checked_in";
+    // The server only accepts sales for a COMPLETED booking (the organizer
+    // marks it complete after the market). Paid / checked-in ones cannot
+    // submit yet.
+    const canSubmitSales = item.status === "completed";
+    const note = refundNote(item);
 
     return (
       <View style={styles.card} key={item.id}>
@@ -223,7 +318,21 @@ export default function MyBookingsScreen() {
           <StatusBadge status={item.status} />
         </View>
 
-        {wasPaid &&
+        {note && <Text style={styles.refundNote}>{note}</Text>}
+
+        {item.status === "checked_in" && (
+          <Text style={styles.waitNote}>
+            Waiting for the organizer to mark this market complete. You can
+            submit sales after that.
+          </Text>
+        )}
+        {item.status === "paid" && (
+          <Text style={styles.waitNote}>
+            This market has ended and you did not check in.
+          </Text>
+        )}
+
+        {canSubmitSales &&
           (hasSalesSubmission ? (
             <View style={styles.salesDoneRow}>
               <Ionicons
@@ -365,7 +474,11 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     marginBottom: Spacing.md,
   },
-  errorBannerText: { fontSize: Typography.sm, color: Colors.booked, flex: 1 },
+  errorBannerText: {
+    fontSize: Typography.sm,
+    color: Colors.dangerText,
+    flex: 1,
+  },
   metricsRow: {
     flexDirection: "row",
     gap: Spacing.sm,
@@ -422,6 +535,16 @@ const styles = StyleSheet.create({
     fontSize: Typography.xs,
     color: Colors.textMuted,
     marginTop: Spacing.xs,
+  },
+  refundNote: {
+    fontSize: Typography.xs,
+    color: Colors.warningText,
+    marginTop: Spacing.xs,
+  },
+  waitNote: {
+    fontSize: Typography.xs,
+    color: Colors.textMuted,
+    marginTop: Spacing.sm,
   },
   salesButton: {
     marginTop: Spacing.sm,

@@ -210,7 +210,7 @@ export default function SessionScheduleScreen() {
       setRecurringBanner(
         `${count} recurring vendor${
           count === 1 ? "" : "s"
-        } auto-reserved a stall for this session (24h to pay before it expires).`,
+        } auto-requested a stall for this session. Each request needs your approval first, then the vendor has up to 24 hours to pay.`,
       );
     }
   };

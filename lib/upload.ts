@@ -13,6 +13,10 @@ import { supabase } from "./supabase";
 export async function pickAndUploadImage(
   bucket: string,
   filePathWithoutExt: string,
+  // upsert (overwrite an existing file) is on by default, as before. Pass
+  // { upsert: false } for a bucket that only allows INSERT: an overwrite
+  // upload also needs SELECT and UPDATE permission, even for a new file.
+  options: { upsert?: boolean } = {},
 ): Promise<string | null> {
   const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
 
@@ -41,7 +45,7 @@ export async function pickAndUploadImage(
     .from(bucket)
     .upload(filePath, decode(base64), {
       contentType: asset.mimeType ?? "image/jpeg",
-      upsert: true,
+      upsert: options.upsert ?? true,
     });
 
   if (error) {

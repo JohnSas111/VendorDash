@@ -40,6 +40,8 @@ function getGreeting(): string {
 export default function VendorHomeScreen() {
   const [businessName, setBusinessName] = useState("");
   const [profileComplete, setProfileComplete] = useState(true);
+  // Defaults to true so the "not verified" notice never flashes while loading.
+  const [isVerified, setIsVerified] = useState(true);
   const [unreadCount, setUnreadCount] = useState(0);
   const [bookings, setBookings] = useState<BookingRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,24 +63,35 @@ export default function VendorHomeScreen() {
       return;
     }
 
-    const [{ data: profile }, { data: vendorDetails }, { count }] =
-      await Promise.all([
-        supabase.from("profiles").select("phone").eq("id", userId).single(),
-        supabase
-          .from("vendor_details")
-          .select("business_name, category")
-          .eq("id", userId)
-          .single(),
-        supabase
-          .from("notifications")
-          .select("id", { count: "exact", head: true })
-          .eq("recipient_id", userId)
-          .eq("is_read", false),
-      ]);
+    // maybeSingle(): a missing row is "profile not finished yet" (no error),
+    // while a real failure (network, permissions) comes back as an error.
+    const [profileRes, detailsRes, notifRes] = await Promise.all([
+      supabase.from("profiles").select("phone").eq("id", userId).maybeSingle(),
+      supabase
+        .from("vendor_details")
+        .select("business_name, category, is_verified")
+        .eq("id", userId)
+        .maybeSingle(),
+      supabase
+        .from("notifications")
+        .select("id", { count: "exact", head: true })
+        .eq("recipient_id", userId)
+        .eq("is_read", false),
+    ]);
 
-    if (vendorDetails) setBusinessName(vendorDetails.business_name);
-    setProfileComplete(Boolean(profile?.phone && vendorDetails?.category));
-    setUnreadCount(count ?? 0);
+    // If the account data failed to load, keep what we already show. It used
+    // to be treated as "profile incomplete", which wrongly told the vendor to
+    // finish setup and sent "Browse markets" to the profile screen.
+    const accountFailed = Boolean(profileRes.error || detailsRes.error);
+    if (!accountFailed) {
+      const vendorDetails = detailsRes.data;
+      if (vendorDetails) setBusinessName(vendorDetails.business_name);
+      setProfileComplete(
+        Boolean(profileRes.data?.phone && vendorDetails?.category),
+      );
+      setIsVerified(vendorDetails?.is_verified === true);
+    }
+    if (!notifRes.error) setUnreadCount(notifRes.count ?? 0);
 
     const { data: bookingData, error } = await supabase
       .from("bookings")
@@ -96,6 +109,11 @@ export default function VendorHomeScreen() {
       return;
     }
     if (bookingData) setBookings(bookingData as unknown as BookingRow[]);
+    if (accountFailed) {
+      setLoadError(
+        "Couldn't load your account details. Pull down to try again.",
+      );
+    }
   }, []);
 
   // Re-fetch every time this screen becomes focused — e.g. navigating back
@@ -127,11 +145,20 @@ export default function VendorHomeScreen() {
     setRefreshing(false);
   }
 
+  // "2026-10-02" is read as a plain calendar date. new Date("2026-10-02")
+  // means midnight UTC, which shows the day before on a device behind UTC.
   function formatDateRange(friday: string, sunday: string) {
-    const f = new Date(friday);
-    const s = new Date(sunday);
+    const [fy, fm, fd] = friday.split("-").map(Number);
+    const [sy, sm, sd] = sunday.split("-").map(Number);
+    if (!fy || !fm || !fd || !sy || !sm || !sd) return `${friday} – ${sunday}`;
+    const f = new Date(fy, fm - 1, fd);
+    const s = new Date(sy, sm - 1, sd);
     const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-    return `${f.toLocaleDateString("en-US", opts)}–${s.getDate()}`;
+    // Same month: "Oct 2–4". Across months: "Oct 30 – Nov 1".
+    if (fm === sm && fy === sy) {
+      return `${f.toLocaleDateString("en-US", opts)}–${sd}`;
+    }
+    return `${f.toLocaleDateString("en-US", opts)} – ${s.toLocaleDateString("en-US", opts)}`;
   }
 
   function handleBrowsePress() {
@@ -182,7 +209,7 @@ export default function VendorHomeScreen() {
           <Ionicons
             name="alert-circle-outline"
             size={16}
-            color={Colors.booked}
+            color={Colors.dangerText}
           />
           <Text style={styles.errorBannerText}>{loadError}</Text>
         </View>
@@ -202,6 +229,26 @@ export default function VendorHomeScreen() {
             <Ionicons name="chevron-forward" size={14} color={Colors.info} />
           </View>
         </TouchableOpacity>
+      )}
+
+      {!loading && profileComplete && !isVerified && (
+        <View style={styles.verifyNotice}>
+          <Ionicons
+            name="shield-outline"
+            size={16}
+            color={Colors.warningText}
+          />
+          <View style={styles.verifyTextWrap}>
+            <Text style={styles.verifyTitle}>
+              Your business isn’t verified yet
+            </Text>
+            <Text style={styles.verifyText}>
+              Until the organizer verifies it, reservation requests expire after
+              24 hours if not approved (72 hours once verified), and stalls
+              can’t auto-renew.
+            </Text>
+          </View>
+        </View>
       )}
 
       <Text style={styles.sectionLabel}>Your bookings</Text>
@@ -345,7 +392,11 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     marginBottom: Spacing.md,
   },
-  errorBannerText: { fontSize: Typography.sm, color: Colors.booked, flex: 1 },
+  errorBannerText: {
+    fontSize: Typography.sm,
+    color: Colors.dangerText,
+    flex: 1,
+  },
   banner: {
     backgroundColor: Colors.infoLight,
     borderRadius: Radius.sm,
@@ -367,6 +418,26 @@ const styles = StyleSheet.create({
     fontSize: Typography.sm,
     fontWeight: "600",
     color: Colors.info,
+  },
+  verifyNotice: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    gap: Spacing.sm,
+    backgroundColor: Colors.warningLight,
+    borderRadius: Radius.sm,
+    padding: Spacing.md,
+    marginBottom: Spacing.lg,
+  },
+  verifyTextWrap: { flex: 1 },
+  verifyTitle: {
+    fontSize: Typography.sm,
+    fontWeight: "600",
+    color: Colors.warningText,
+  },
+  verifyText: {
+    fontSize: Typography.xs,
+    color: Colors.warningText,
+    marginTop: 2,
   },
   sectionLabel: {
     fontSize: Typography.sm,

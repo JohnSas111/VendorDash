@@ -44,6 +44,22 @@ function pesos(cents: number) {
   })}`;
 }
 
+// "2026-10-02" is read as a plain calendar date. new Date("2026-10-02") means
+// midnight UTC, which shows the day before on a device behind UTC, and a
+// weekend that crosses a month needs both month names.
+function formatDateRange(friday: string, sunday: string) {
+  const [fy, fm, fd] = friday.split("-").map(Number);
+  const [sy, sm, sd] = sunday.split("-").map(Number);
+  if (!fy || !fm || !fd || !sy || !sm || !sd) return `${friday} – ${sunday}`;
+  const f = new Date(fy, fm - 1, fd);
+  const s = new Date(sy, sm - 1, sd);
+  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+  if (fm === sm && fy === sy) {
+    return `${f.toLocaleDateString("en-US", opts)}–${sd}`;
+  }
+  return `${f.toLocaleDateString("en-US", opts)} – ${s.toLocaleDateString("en-US", opts)}`;
+}
+
 export default function BookingDetailScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const { showToast } = useToast();
@@ -121,8 +137,12 @@ export default function BookingDetailScreen() {
 
     if (error || !data?.success) {
       setBooking({ ...booking, is_recurring: !next });
+      // The function explains refusals in data.error (e.g. "available once the
+      // organizer has verified your business"); `error` is a network/server failure.
       showToast(
-        error?.message ?? "Couldn't update that. Please try again.",
+        data?.error ??
+          error?.message ??
+          "Couldn't update that. Please try again.",
         "error",
       );
     }
@@ -236,19 +256,20 @@ export default function BookingDetailScreen() {
   }
 
   const dateLabel = booking.market_sessions
-    ? `${new Date(booking.market_sessions.friday_date).toLocaleDateString(
-        "en-US",
-        {
-          month: "short",
-          day: "numeric",
-        },
-      )}–${new Date(booking.market_sessions.sunday_date).getDate()}`
+    ? formatDateRange(
+        booking.market_sessions.friday_date,
+        booking.market_sessions.sunday_date,
+      )
     : "Date unavailable";
 
   const isCheckedIn = booking.status === "checked_in";
   const canShowQR = booking.status === "paid" || isCheckedIn;
+  // Auto-renew can be turned on for a confirmed booking (paid / checked in /
+  // completed). It can be turned OFF on any live booking too, so an
+  // auto-requested (pending/approved) booking can be stopped from here.
   const canToggleRecurring =
-    booking.status === "paid" || booking.status === "checked_in";
+    ["paid", "checked_in", "completed"].includes(booking.status) ||
+    (["pending", "approved"].includes(booking.status) && booking.is_recurring);
 
   return (
     <View style={styles.container}>

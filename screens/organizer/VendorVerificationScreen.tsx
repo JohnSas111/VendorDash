@@ -77,18 +77,16 @@ export default function VendorVerificationScreen() {
 
   const setVerified = async (id: string, verified: boolean) => {
     setActingOnId(id);
-    const { error: err } = await supabase
-      .from("vendor_details")
-      .update({ is_verified: verified })
-      .eq("id", id);
+    // verify_vendor checks that you are an organizer, records who verified
+    // and when, and notifies the vendor. Writing is_verified directly skipped
+    // all of that (and is blocked once the database is locked down).
+    const { error: err } = await supabase.rpc("verify_vendor", {
+      p_vendor_id: id,
+      p_verified: verified,
+    });
     setActingOnId(null);
     if (err) {
-      showToast(
-        err.message.includes("policy")
-          ? "This likely means migration-organizer-web.sql hasn\u2019t been run yet — organizers need its RLS policy to update vendor_details."
-          : err.message,
-        "error",
-      );
+      showToast(err.message, "error");
       return;
     }
     showToast(verified ? "Vendor verified." : "Vendor unverified.", "success");

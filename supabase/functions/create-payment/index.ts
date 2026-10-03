@@ -1,259 +1,166 @@
+// supabase/functions/create-payment/index.ts
+//
+// Starts a GCash / Maya payment for an APPROVED booking.
+// Deploy with verify_jwt ON (the default): only a signed-in vendor can call it.
+//
+// The amount is NEVER taken from the app. It is worked out by the database
+// function payment_quote: stall price x attending days + the service fee.
+
 import { createClient } from "jsr:@supabase/supabase-js@2";
 
-const PAYMONGO_SECRET_KEY = Deno.env.get("PAYMONGO_SECRET_KEY")!;
-const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const PAYMONGO_SECRET_KEY = Deno.env.get("PAYMONGO_SECRET_KEY");
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-const SERVICE_FEE_CENTS = 400;
+const REDIRECT_BASE = "https://vendordash-payment-page.vercel.app";
+
+function json(body: unknown, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+// Refusals come back as a normal response with a readable message, so the app
+// can show it. (supabase.functions.invoke hides the body of non-2xx responses
+// behind a generic error.)
+function refuse(message: string) {
+  return json({ error: message });
+}
+
+// Our database functions raise plain-language messages (SQLSTATE P0001).
+// Those are safe to show. Anything else is logged and replaced.
+function friendly(
+  error: { code?: string; message?: string },
+  fallback: string,
+) {
+  return error.code === "P0001" && error.message ? error.message : fallback;
+}
 
 Deno.serve(async (req) => {
   try {
-    const authHeader = req.headers.get("Authorization");
-
-    if (!authHeader) {
-      return new Response(
-        JSON.stringify({ error: "Authentication required" }),
-        {
-          status: 401,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+    if (!PAYMONGO_SECRET_KEY || !SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("create-payment: missing configuration");
+      return json({ error: "Not configured" }, 500);
     }
 
-    const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const authHeader = req.headers.get("Authorization");
+    if (!authHeader) {
+      return json({ error: "Authentication required" }, 401);
+    }
 
-    // Verify the logged-in user.
+    const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+
+    // Identify the vendor from their own login, never from the request body.
     const {
       data: { user },
       error: userError,
-    } = await supabaseAdmin.auth.getUser(authHeader.replace("Bearer ", ""));
-
+    } = await supabase.auth.getUser(authHeader.replace("Bearer ", ""));
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: "Invalid authentication" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ error: "Invalid authentication" }, 401);
     }
 
-    const { bookingId, method } = await req.json();
-
-    if (!bookingId || !method) {
-      console.log("CREATE PAYMENT VALIDATION FAILED:", {
-        bookingId,
-        method,
-      });
-
-      return new Response(
-        JSON.stringify({
-          error: "Missing bookingId or payment method",
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+    let body: { bookingId?: unknown; method?: unknown };
+    try {
+      body = await req.json();
+    } catch {
+      return json({ error: "Invalid request" }, 400);
     }
-
+    const { bookingId, method } = body;
+    if (typeof bookingId !== "string" || typeof method !== "string") {
+      return json({ error: "Missing bookingId or payment method" }, 400);
+    }
     if (method !== "gcash" && method !== "paymaya") {
-      return new Response(JSON.stringify({ error: "Invalid payment method" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" },
-      });
+      return json({ error: "Invalid payment method" }, 400);
     }
 
-    // Load the booking together with its stall.
-    const { data: booking, error: bookingError } = await supabaseAdmin
-      .from("bookings")
-      .select(
-        `
-        id,
-        vendor_id,
-        status,
-        stall_id,
-        stalls (
-          id,
-          price_per_day_cents,
-          venue_id
-        )
-      `,
-      )
-      .eq("id", bookingId)
-      .single();
-
-    if (bookingError || !booking) {
-      console.log("BOOKING LOOKUP FAILED:", bookingError);
-
-      return new Response(JSON.stringify({ error: "Booking not found" }), {
-        status: 404,
-        headers: { "Content-Type": "application/json" },
-      });
+    // 1. What does this vendor owe? Also checks: it is THEIR booking, it is
+    //    approved, and the payment deadline has not passed.
+    const { data: quoteRows, error: quoteError } = await supabase.rpc(
+      "payment_quote",
+      { p_booking_id: bookingId, p_vendor_id: user.id },
+    );
+    if (quoteError) {
+      console.error("create-payment: quote refused", quoteError);
+      return refuse(friendly(quoteError, "We couldn't start this payment."));
+    }
+    const quote = Array.isArray(quoteRows) ? quoteRows[0] : quoteRows;
+    if (!quote || !Number.isInteger(quote.amount_cents)) {
+      console.error("create-payment: quote missing", quoteRows);
+      return refuse("We couldn't work out the amount for this booking.");
     }
 
-    // The booking must belong to the logged-in vendor.
-    if (booking.vendor_id !== user.id) {
-      return new Response(
-        JSON.stringify({
-          error: "You are not allowed to pay for this booking",
-        }),
-        {
-          status: 403,
-          headers: { "Content-Type": "application/json" },
+    // 2. Ask PayMongo for a checkout link for exactly that amount.
+    let sourceResponse: Response;
+    try {
+      sourceResponse = await fetch("https://api.paymongo.com/v1/sources", {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${btoa(PAYMONGO_SECRET_KEY + ":")}`,
+          "Content-Type": "application/json",
         },
-      );
-    }
-
-    // Only approved bookings can be paid.
-    if (booking.status !== "approved") {
-      console.log("BOOKING STATUS NOT APPROVED:", booking.status);
-
-      return new Response(
-        JSON.stringify({
-          error: "This booking is not available for payment",
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    const stall = Array.isArray(booking.stalls)
-      ? booking.stalls[0]
-      : booking.stalls;
-
-    if (!stall?.price_per_day_cents) {
-      console.log("STALL PRICE MISSING:", stall);
-
-      return new Response(
-        JSON.stringify({
-          error: "Stall price could not be determined",
-        }),
-        {
-          status: 400,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
-    }
-
-    // Calculate the amount from the database.
-    const stallTotal = stall.price_per_day_cents;
-    const amountCents = stallTotal + SERVICE_FEE_CENTS;
-
-    console.log("PAYMENT AMOUNT:", {
-      stallTotal,
-      serviceFee: SERVICE_FEE_CENTS,
-      amountCents,
-      method,
-    });
-
-    const redirectBase = "https://vendordash-payment-page.vercel.app";
-
-    const sourceResponse = await fetch("https://api.paymongo.com/v1/sources", {
-      method: "POST",
-      headers: {
-        Authorization: `Basic ${btoa(PAYMONGO_SECRET_KEY + ":")}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        data: {
-          attributes: {
-            amount: amountCents,
-            currency: "PHP",
-            type: method,
-            redirect: {
-              success: `${redirectBase}?status=success`,
-              failed: `${redirectBase}?status=failed`,
+        body: JSON.stringify({
+          data: {
+            attributes: {
+              amount: quote.amount_cents,
+              currency: "PHP",
+              type: method,
+              redirect: {
+                success: `${REDIRECT_BASE}?status=success`,
+                failed: `${REDIRECT_BASE}?status=failed`,
+              },
             },
           },
-        },
-      }),
-    });
-
-    const sourceData = await sourceResponse.json();
-
-    if (!sourceResponse.ok) {
-      console.log("PAYMONGO STATUS:", sourceResponse.status);
-
-      console.log("PAYMONGO RESPONSE:", JSON.stringify(sourceData));
-
-      return new Response(
-        JSON.stringify({
-          error: sourceData?.errors?.[0]?.detail ?? "PayMongo error",
         }),
-        {
-          status: 400,
-          headers: {
-            "Content-Type": "application/json",
-          },
-        },
-      );
+        signal: AbortSignal.timeout(20000),
+      });
+    } catch (err) {
+      console.error("create-payment: PayMongo unreachable", err);
+      return refuse("The payment service is not responding. Please try again.");
     }
 
-    const sourceId = sourceData.data.id;
-    const checkoutUrl = sourceData.data.attributes.redirect.checkout_url;
+    const sourceData = await sourceResponse.json().catch(() => null);
+    if (!sourceResponse.ok) {
+      // PayMongo's raw message stays in the logs, not in the app.
+      console.error("create-payment: PayMongo refused", {
+        status: sourceResponse.status,
+        body: JSON.stringify(sourceData),
+      });
+      return refuse("We couldn't start the payment. Please try again.");
+    }
 
-    if (!checkoutUrl) {
-      console.log(
-        "PAYMONGO DID NOT RETURN CHECKOUT URL:",
+    const sourceId = sourceData?.data?.id;
+    const checkoutUrl = sourceData?.data?.attributes?.redirect?.checkout_url;
+    if (typeof sourceId !== "string" || !checkoutUrl) {
+      console.error(
+        "create-payment: no checkout URL",
         JSON.stringify(sourceData),
       );
-
-      return new Response(
-        JSON.stringify({
-          error: "PayMongo did not return a checkout URL",
-        }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+      return refuse("We couldn't start the payment. Please try again.");
     }
 
-    const { error: paymentError } = await supabaseAdmin
-      .from("payments")
-      .insert({
-        booking_id: bookingId,
-        amount_cents: amountCents,
-        paymongo_payment_intent_id: sourceId,
-        paymongo_source_type: method,
-        status: "processing",
-      });
-
-    if (paymentError) {
-      console.error("Failed to create payment record:", paymentError);
-
-      return new Response(
-        JSON.stringify({
-          error: "Failed to create payment record",
-        }),
-        {
-          status: 500,
-          headers: { "Content-Type": "application/json" },
-        },
-      );
+    // 3. Remember it. This also retires any older open source for the same
+    //    booking, so only the newest checkout can ever be charged.
+    const { error: registerError } = await supabase.rpc("payment_register", {
+      p_booking_id: bookingId,
+      p_source_id: sourceId,
+      p_source_type: method,
+      p_amount_cents: quote.amount_cents,
+    });
+    if (registerError) {
+      console.error("create-payment: could not record payment", registerError);
+      return refuse(friendly(registerError, "We couldn't start this payment."));
     }
 
-    return new Response(
-      JSON.stringify({
-        checkoutUrl,
-        amountCents,
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
+    return json({
+      checkoutUrl,
+      amountCents: quote.amount_cents,
+      stallTotalCents: quote.stall_total_cents,
+      feeCents: quote.fee_cents,
+      days: quote.days,
+    });
   } catch (err) {
-    console.error("create-payment error:", err);
-
-    return new Response(
-      JSON.stringify({
-        error: "Unable to create payment",
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" },
-      },
-    );
+    console.error("create-payment: unexpected error", err);
+    return json({ error: "Unable to create payment" }, 500);
   }
 });
