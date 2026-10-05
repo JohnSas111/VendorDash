@@ -11,6 +11,7 @@ import {
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
+import { ownerPrefix, vendorDisplay } from "@/lib/uxHelpers";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -34,7 +35,8 @@ type Session = {
 type PendingBooking = {
   id: string;
   requested_at: string;
-  vendor_name: string;
+  vendor_name: string; // business name (falls back to the person's name)
+  owner_name: string;
   stall_number: string;
 };
 
@@ -107,7 +109,7 @@ export default function OrganizerHomeScreen() {
       const { data: pendingRows, count: pendingCount } = await supabase
         .from("bookings")
         .select(
-          "id, requested_at, profiles!bookings_vendor_id_fkey(full_name), stalls!inner(stall_number, venue_id)",
+          "id, requested_at, profiles!bookings_vendor_id_fkey(full_name, vendor_details!vendor_details_id_fkey(business_name)), stalls!inner(stall_number, venue_id)",
           { count: "exact" },
         )
         .eq("status", "pending")
@@ -119,7 +121,8 @@ export default function OrganizerHomeScreen() {
         (row: any) => ({
           id: row.id,
           requested_at: row.requested_at,
-          vendor_name: row.profiles?.full_name ?? "Unknown vendor",
+          vendor_name: vendorDisplay(row.profiles).name,
+          owner_name: vendorDisplay(row.profiles).owner,
           stall_number: row.stalls?.stall_number ?? "—",
         }),
       );
@@ -356,8 +359,8 @@ export default function OrganizerHomeScreen() {
               <View style={styles.rowInfo}>
                 <Text style={styles.rowTitle}>{b.vendor_name}</Text>
                 <Text style={styles.rowSubtitle}>
-                  Stall {b.stall_number} · requested{" "}
-                  {formatDate(b.requested_at)}
+                  {ownerPrefix(b.vendor_name, b.owner_name)}Stall{" "}
+                  {b.stall_number} · requested {formatDate(b.requested_at)}
                 </Text>
               </View>
               <View style={styles.rowActions}>

@@ -17,7 +17,8 @@
         "backgroundImage": "./assets/images/android-icon-background.png",
         "monochromeImage": "./assets/images/android-icon-monochrome.png"
       },
-      "predictiveBackGestureEnabled": false
+      "predictiveBackGestureEnabled": false,
+      "package": "com.vendordash.demo"
     },
     "web": {
       "output": "single",
@@ -40,7 +41,20 @@
       "expo-web-browser",
       "expo-font",
       "expo-image",
-      "expo-status-bar"
+      "expo-status-bar",
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "VendorDash uses the camera to scan vendors' QR codes at check-in.",
+          "recordAudioAndroid": false
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "microphonePermission": false
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,

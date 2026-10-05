@@ -9,13 +9,23 @@ import {
   shared,
   statusColors,
 } from "@/lib/organizerTheme";
+import {
+  scanAlready,
+  scanFailed,
+  scanSuccess,
+  scanUnknown,
+  type ScanFeedback as ScanFeedbackModel,
+} from "@/lib/scanFeedback";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
+import { ownerPrefix, vendorDisplay } from "@/lib/uxHelpers";
 import { Ionicons } from "@expo/vector-icons";
 import { CameraView, useCameraPermissions } from "expo-camera";
+import * as Haptics from "expo-haptics";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Modal,
+  Platform,
   ScrollView,
   StyleSheet,
   Text,
@@ -27,8 +37,10 @@ import {
 type Row = {
   id: string;
   status: string;
-  vendor_name: string;
+  vendor_name: string; // business name (falls back to the person's name)
+  owner_name: string;
   stall_number: string;
+  days: string[]; // booked days ("friday" | "saturday" | "sunday")
   // Checked in AND the vendor's last booked day has already ended. This is a
   // display hint only - complete_booking re-checks the time on the server.
   ready: boolean;
@@ -43,7 +55,18 @@ type SessionRow = {
   status: string;
 };
 
-type ScanFeedback = { type: "success" | "error"; message: string } | null;
+type ScanFeedback = ScanFeedbackModel | null;
+
+// A short buzz so the organizer can tell the result without looking at the
+// screen (phones only; nothing happens on the web).
+function buzz(kind: "success" | "error") {
+  if (Platform.OS === "web") return;
+  Haptics.notificationAsync(
+    kind === "success"
+      ? Haptics.NotificationFeedbackType.Success
+      : Haptics.NotificationFeedbackType.Error,
+  ).catch(() => {});
+}
 
 type ReasonModalState = { kind: "undo" | "early"; row: Row } | null;
 
@@ -190,7 +213,7 @@ export default function CheckInScreen() {
     const { data, error: rowsError } = await supabase
       .from("bookings")
       .select(
-        "id, status, attending_days, profiles!bookings_vendor_id_fkey(full_name), stalls!inner(stall_number, venue_id)",
+        "id, status, attending_days, profiles!bookings_vendor_id_fkey(full_name, vendor_details!vendor_details_id_fkey(business_name)), stalls!inner(stall_number, venue_id)",
       )
       .eq("session_id", session.id)
       .eq("stalls.venue_id", venue.id)
@@ -206,8 +229,10 @@ export default function CheckInScreen() {
         return {
           id: row.id,
           status: row.status,
-          vendor_name: row.profiles?.full_name ?? "Unknown vendor",
+          vendor_name: vendorDisplay(row.profiles).name,
+          owner_name: vendorDisplay(row.profiles).owner,
           stall_number: row.stalls?.stall_number ?? "—",
+          days: row.attending_days ?? [],
           ready:
             row.status === "checked_in" && endMs !== null && nowMs >= endMs,
         };
@@ -356,31 +381,24 @@ export default function CheckInScreen() {
     const match = rows.find((r) => r.id === bookingId);
 
     if (!match) {
-      setScanFeedback({
-        type: "error",
-        message: "QR doesn't match a paid booking for this session.",
-      });
+      setScanFeedback(scanUnknown());
+      buzz("error");
       return;
     }
     if (match.status === "checked_in" || match.status === "completed") {
-      setScanFeedback({
-        type: "error",
-        message: `${match.vendor_name} (Stall ${match.stall_number}) is already ${
-          match.status === "completed" ? "completed" : "checked in"
-        }.`,
-      });
+      setScanFeedback(scanAlready(match, match.status));
+      buzz("error");
       return;
     }
 
     const message = await runCheckIn(match.id);
-    setScanFeedback(
-      message
-        ? { type: "error", message }
-        : {
-            type: "success",
-            message: `Checked in: ${match.vendor_name} — Stall ${match.stall_number}`,
-          },
-    );
+    if (message) {
+      setScanFeedback(scanFailed(match, message));
+      buzz("error");
+    } else {
+      setScanFeedback(scanSuccess(match));
+      buzz("success");
+    }
   };
 
   if (venueLoading) {
@@ -408,6 +426,7 @@ export default function CheckInScreen() {
     (r) =>
       !search.trim() ||
       r.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
+      r.owner_name.toLowerCase().includes(search.toLowerCase()) ||
       r.stall_number.toLowerCase().includes(search.toLowerCase()),
   );
   const checkedInCount = rows.filter(
@@ -545,8 +564,16 @@ export default function CheckInScreen() {
 
       {mode === "scan" ? (
         <View>
+          {isDesktop && (
+            <Text style={[shared.rowSubtitle, styles.scanTip]}>
+              Scanning works best on your phone. On a laptop, use the Table view
+              and search for the vendor.
+            </Text>
+          )}
+
           {scanFeedback && (
             <View
+              accessibilityLiveRegion="polite"
               style={[
                 shared.card,
                 styles.scanFeedbackCard,
@@ -561,24 +588,34 @@ export default function CheckInScreen() {
                     ? "checkmark-circle"
                     : "alert-circle"
                 }
-                size={16}
+                size={28}
                 color={
                   scanFeedback.type === "success" ? COLORS.teal : COLORS.clay
                 }
               />
-              <Text
-                style={[
-                  styles.scanFeedbackText,
-                  {
-                    color:
-                      scanFeedback.type === "success"
-                        ? COLORS.teal
-                        : COLORS.clay,
-                  },
-                ]}
-              >
-                {scanFeedback.message}
-              </Text>
+              <View style={styles.scanFeedbackBody}>
+                <Text
+                  style={[
+                    styles.scanFeedbackTitle,
+                    {
+                      color:
+                        scanFeedback.type === "success"
+                          ? COLORS.teal
+                          : COLORS.clay,
+                    },
+                  ]}
+                >
+                  {scanFeedback.title}
+                </Text>
+                {scanFeedback.name && (
+                  <Text style={styles.scanFeedbackName}>
+                    {scanFeedback.name}
+                  </Text>
+                )}
+                <Text style={styles.scanFeedbackDetail}>
+                  {scanFeedback.detail}
+                </Text>
+              </View>
             </View>
           )}
 
@@ -638,7 +675,8 @@ export default function CheckInScreen() {
                     <View>
                       <Text style={shared.rowTitle}>{r.vendor_name}</Text>
                       <Text style={shared.rowSubtitle}>
-                        Stall {r.stall_number}
+                        {ownerPrefix(r.vendor_name, r.owner_name)}Stall{" "}
+                        {r.stall_number}
                       </Text>
                     </View>
                     <View style={styles.rowRight}>
@@ -829,8 +867,8 @@ const styles = StyleSheet.create({
   scanFeedbackCard: {
     marginBottom: Spacing.md,
     flexDirection: "row",
-    alignItems: "center",
-    gap: Spacing.sm,
+    alignItems: "flex-start",
+    gap: Spacing.md,
   },
   scanFeedbackSuccess: {
     borderColor: COLORS.teal,
@@ -840,7 +878,20 @@ const styles = StyleSheet.create({
     borderColor: COLORS.clay,
     backgroundColor: Colors.dangerLight,
   },
-  scanFeedbackText: { fontWeight: "600", fontSize: Typography.base, flex: 1 },
+  scanFeedbackBody: { flex: 1, gap: 2 },
+  scanFeedbackTitle: {
+    fontSize: Typography.sm,
+    fontWeight: "700",
+    textTransform: "uppercase",
+    letterSpacing: 0.5,
+  },
+  scanFeedbackName: {
+    fontSize: Typography.xl,
+    fontWeight: "700",
+    color: COLORS.inkNavy,
+  },
+  scanFeedbackDetail: { fontSize: Typography.base, color: COLORS.slate },
+  scanTip: { marginBottom: Spacing.md },
   cameraFrame: {
     borderRadius: RADIUS.md,
     overflow: "hidden",

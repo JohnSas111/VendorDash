@@ -1,4 +1,5 @@
 import { InputField } from "@/components/InputField";
+import { KeyboardScreen } from "@/components/KeyboardScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
@@ -77,7 +78,7 @@ export default function SignupScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardScreen style={styles.container}>
       <Text style={styles.title}>Create your account</Text>
 
       <InputField
@@ -125,7 +126,7 @@ export default function SignupScreen() {
           <Text style={styles.link}>Sign in</Text>
         </TouchableOpacity>
       </View>
-    </View>
+    </KeyboardScreen>
   );
 }
 

@@ -1,7 +1,9 @@
 import { ConfirmModal } from "@/components/ConfirmModal";
+import { KeyboardAvoider } from "@/components/KeyboardScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { goBackSafely } from "@/lib/navigation";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
@@ -211,7 +213,7 @@ export default function BookingDetailScreen() {
       "Reservation cancelled — the stall is available again.",
       "success",
     );
-    router.back();
+    goBackSafely("/(vendor)/(tabs)/my-bookings");
   }
 
   // Takes the vendor from "approved" straight into Payment, now that
@@ -246,7 +248,7 @@ export default function BookingDetailScreen() {
         </Text>
         <Pressable
           accessibilityRole="button"
-          onPress={() => router.back()}
+          onPress={() => goBackSafely("/(vendor)/(tabs)/my-bookings")}
           style={styles.backLink}
         >
           <Text style={styles.backLinkText}>Go back</Text>
@@ -435,7 +437,7 @@ export default function BookingDetailScreen() {
         animationType="fade"
         onRequestClose={() => setRefundModalOpen(false)}
       >
-        <View style={styles.modalOverlay}>
+        <KeyboardAvoider style={styles.modalOverlay}>
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>Request a refund</Text>
             <Text style={styles.modalHint}>
@@ -471,7 +473,7 @@ export default function BookingDetailScreen() {
               </View>
             </View>
           </View>
-        </View>
+        </KeyboardAvoider>
       </Modal>
 
       <ConfirmModal

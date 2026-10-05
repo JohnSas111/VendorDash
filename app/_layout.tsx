@@ -35,7 +35,7 @@ export default function RootLayout() {
       router.replace("/(auth)/login");
     } else if (session && inAuthGroup) {
       // Logged in, but sitting on an auth screen — send to home
-      router.replace("/(vendor)/home");
+      router.replace("/(vendor)/(tabs)/home");
     }
   }, [session, segments, loading]);
 

@@ -1,5 +1,6 @@
 // PATH: screens/auth/CompleteProfileScreen.tsx  (replace the file at exactly this path)
 import { InputField } from "@/components/InputField";
+import { KeyboardScreen } from "@/components/KeyboardScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
@@ -79,11 +80,11 @@ export default function CompleteProfileScreen() {
       return;
     }
 
-    router.replace("/(vendor)/home");
+    router.replace("/(vendor)/(tabs)/home");
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardScreen style={styles.container}>
       <Text style={styles.title}>Complete your profile</Text>
       <Text style={styles.subtitle}>
         Vendors need this before booking a stall
@@ -142,7 +143,7 @@ export default function CompleteProfileScreen() {
         onPress={handleSave}
         loading={loading}
       />
-    </View>
+    </KeyboardScreen>
   );
 }
 

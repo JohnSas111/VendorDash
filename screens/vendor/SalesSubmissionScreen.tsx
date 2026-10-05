@@ -1,6 +1,8 @@
 import { InputField } from "@/components/InputField";
+import { KeyboardScreen } from "@/components/KeyboardScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import { goBackSafely } from "@/lib/navigation";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { pickAndUploadImage } from "@/lib/upload";
@@ -45,20 +47,10 @@ function parsePesosToCents(text: string): number | null {
   return cents;
 }
 
-// router.back() throws "GO_BACK was not handled" when the screen was opened
-// directly (a pasted link, a browser refresh) and there is nothing to go
-// back to. Fall back to the bookings tab.
-function goBackSafely() {
-  if (router.canGoBack()) {
-    router.back();
-  } else {
-    router.replace("/(vendor)/my-bookings");
-  }
-}
-
 export default function SalesSubmissionScreen() {
   const { bookingId } = useLocalSearchParams<{ bookingId: string }>();
   const { showToast } = useToast();
+  const goBack = () => goBackSafely("/(vendor)/(tabs)/my-bookings");
 
   const [checkingExisting, setCheckingExisting] = useState(true);
   const [isEditing, setIsEditing] = useState(false);
@@ -238,7 +230,7 @@ export default function SalesSubmissionScreen() {
         : "Thanks! Your sales report has been saved.",
       "success",
     );
-    goBackSafely();
+    goBack();
   }
 
   if (checkingExisting) {
@@ -257,7 +249,7 @@ export default function SalesSubmissionScreen() {
         <Text style={styles.subtitle}>
           We couldn’t find this booking in your account.
         </Text>
-        <PrimaryButton label="Go back" onPress={goBackSafely} />
+        <PrimaryButton label="Go back" onPress={goBack} />
       </View>
     );
   }
@@ -275,13 +267,13 @@ export default function SalesSubmissionScreen() {
           You can submit your sales after the organizer has completed your
           market day.
         </Text>
-        <PrimaryButton label="Go back" onPress={goBackSafely} />
+        <PrimaryButton label="Go back" onPress={goBack} />
       </View>
     );
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardScreen style={styles.container}>
       <Text style={styles.title}>
         {isEditing ? "Update your sales" : "Submit your sales"}
       </Text>
@@ -370,7 +362,7 @@ export default function SalesSubmissionScreen() {
         loading={loading}
         disabled={lockedUntilPassed}
       />
-    </View>
+    </KeyboardScreen>
   );
 }
 

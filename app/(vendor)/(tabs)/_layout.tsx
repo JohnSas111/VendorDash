@@ -1,8 +1,8 @@
 import { Colors } from "@/constants/theme";
 import { Tabs } from "expo-router";
-import { Text } from "react-native";
+import { Text, type ColorValue } from "react-native";
 
-function TabIcon({ emoji, color }: { emoji: string; color: string }) {
+function TabIcon({ emoji, color }: { emoji: string; color: ColorValue }) {
   return <Text style={{ fontSize: 18, color }}>{emoji}</Text>;
 }
 

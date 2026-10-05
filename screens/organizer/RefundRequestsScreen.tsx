@@ -25,6 +25,7 @@ import {
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
+import { ownerPrefix, vendorDisplay } from "@/lib/uxHelpers";
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
@@ -43,7 +44,8 @@ type RefundStatus = "requested" | "approved" | "rejected" | "refunded";
 type RefundRow = {
   id: string;
   status: RefundStatus;
-  vendorName: string;
+  vendorName: string; // business name (falls back to the person's name)
+  ownerName: string;
   stallNumber: string;
   paidCents: number;
   reason: string;
@@ -101,7 +103,7 @@ export default function RefundRequestsScreen() {
         `id, status, reason, decision_comment, refund_amount_cents, created_at,
          bookings!inner(
            attending_days,
-           profiles!bookings_vendor_id_fkey(full_name),
+           profiles!bookings_vendor_id_fkey(full_name, vendor_details!vendor_details_id_fkey(business_name)),
            stalls!inner(stall_number, venue_id),
            market_sessions(friday_date, sunday_date),
            payments(amount_cents, status)
@@ -125,7 +127,8 @@ export default function RefundRequestsScreen() {
       return {
         id: row.id,
         status: row.status,
-        vendorName: booking?.profiles?.full_name ?? "Unknown vendor",
+        vendorName: vendorDisplay(booking?.profiles).name,
+        ownerName: vendorDisplay(booking?.profiles).owner,
         stallNumber: booking?.stalls?.stall_number ?? "—",
         paidCents,
         reason: row.reason,
@@ -336,7 +339,8 @@ export default function RefundRequestsScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={shared.rowTitle}>{r.vendorName}</Text>
                   <Text style={shared.rowSubtitle}>
-                    Stall {r.stallNumber} · paid {formatMoney(r.paidCents)} ·
+                    {ownerPrefix(r.vendorName, r.ownerName)}Stall{" "}
+                    {r.stallNumber} · paid {formatMoney(r.paidCents)} ·
                     requested {formatDate(r.createdAt)}
                   </Text>
                   <Text numberOfLines={1} style={styles.reasonPreview}>
@@ -388,6 +392,9 @@ export default function RefundRequestsScreen() {
           {selected && (
             <View style={[shared.card, styles.detailCard]}>
               <Text style={shared.rowTitle}>{selected.vendorName}</Text>
+              {selected.ownerName !== selected.vendorName && (
+                <Text style={shared.rowSubtitle}>{selected.ownerName}</Text>
+              )}
               <Text style={shared.rowSubtitle}>
                 Stall {selected.stallNumber} · {selected.sessionLabel}
               </Text>

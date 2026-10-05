@@ -95,7 +95,7 @@ export default function PaymentScreen() {
         "Still confirming — check My Bookings in a moment if you already paid.",
         "info",
       );
-      router.replace("/(vendor)/my-bookings");
+      router.replace("/(vendor)/(tabs)/my-bookings");
     }
   }
 

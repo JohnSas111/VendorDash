@@ -2,10 +2,12 @@ import { ConfirmModal } from "@/components/ConfirmModal";
 import { Spacing } from "@/constants/theme";
 import { BREAKPOINT, COLORS, RADIUS } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
+import { scrollEdges } from "@/lib/uxHelpers";
 import { Ionicons } from "@expo/vector-icons";
 import { usePathname, useRouter } from "expo-router";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
+  Platform,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -49,6 +51,9 @@ const GROUPS: { section: string; items: NavItem[] }[] = [
   },
 ];
 
+// Opacity of the fade strips (5px each) at the top / bottom of the menu.
+const FADE_STEPS = [0.96, 0.8, 0.6, 0.38, 0.16];
+
 const ALL_ITEMS: NavItem[] = [OVERVIEW, ...GROUPS.flatMap((g) => g.items)];
 
 export default function OrganizerNav() {
@@ -57,6 +62,46 @@ export default function OrganizerNav() {
   const router = useRouter();
   const pathname = usePathname(); // e.g. "/overview"
   const [signOutConfirmVisible, setSignOutConfirmVisible] = useState(false);
+
+  // Is there more menu above / below the visible part? Shown as a fade, an
+  // arrow and a thin scrollbar so a short window never hides items silently.
+  const scrollRef = useRef<ScrollView>(null);
+  const metrics = useRef({ y: 0, viewH: 0, contentH: 0 });
+  const [edges, setEdges] = useState({
+    canScrollUp: false,
+    canScrollDown: false,
+  });
+  const updateEdges = () => {
+    const m = metrics.current;
+    const next = scrollEdges(m.y, m.viewH, m.contentH);
+    setEdges((prev) =>
+      prev.canScrollUp === next.canScrollUp &&
+      prev.canScrollDown === next.canScrollDown
+        ? prev
+        : next,
+    );
+  };
+  const scrollByStep = (direction: 1 | -1) => {
+    scrollRef.current?.scrollTo({
+      y: Math.max(0, metrics.current.y + direction * 160),
+      animated: true,
+    });
+  };
+
+  // Web only: a thin, light scrollbar for the menu (the default one is thick
+  // on Windows). Added once.
+  useEffect(() => {
+    if (Platform.OS !== "web" || typeof document === "undefined") return;
+    if (document.getElementById("vd-nav-scroll-css")) return;
+    const style = document.createElement("style");
+    style.id = "vd-nav-scroll-css";
+    style.textContent =
+      "[data-vd-nav-scroll]{scrollbar-width:thin;scrollbar-color:#C9C9C9 transparent}" +
+      "[data-vd-nav-scroll]::-webkit-scrollbar{width:6px}" +
+      "[data-vd-nav-scroll]::-webkit-scrollbar-thumb{background:#C9C9C9;border-radius:3px}" +
+      "[data-vd-nav-scroll]::-webkit-scrollbar-track{background:transparent}";
+    document.head.appendChild(style);
+  }, []);
 
   const isActive = (name: string) => pathname === `/${name}`;
   const go = (name: string) => router.push(`/${name}` as any);
@@ -69,67 +114,136 @@ export default function OrganizerNav() {
   if (isDesktop) {
     return (
       <View style={styles.sidebar}>
-        {/* BUGFIX: this used to be one long View with no ScrollView — on a
-            short browser window the bottom items (Settings) rendered off
-            the bottom edge with no way to reach them. The nav list is now
-            its own scrollable region, with Sign out pinned in a footer
-            below it so it's always reachable regardless of window height
-            or how many nav items exist. */}
-        <ScrollView
-          style={styles.sidebarScroll}
-          contentContainerStyle={styles.sidebarScrollContent}
-          showsVerticalScrollIndicator={false}
-        >
+        {/* The brand stays pinned at the top and Sign out at the bottom; only
+            the menu in between scrolls. On a short window the menu can be
+            taller than the space, so it shows a fade + arrow + thin
+            scrollbar on whichever side has more to reveal. */}
+        <View style={styles.sidebarHeader}>
           <Text style={styles.sidebarBrand}>VendorDash</Text>
           <Text style={styles.sidebarBrandSub}>Organizer</Text>
-          <View style={{ height: Spacing.xl }} />
+        </View>
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityState={{ selected: isActive(OVERVIEW.name) }}
-            onPress={() => go(OVERVIEW.name)}
-            style={[
-              styles.sidebarItem,
-              isActive(OVERVIEW.name) && styles.sidebarItemActive,
-            ]}
+        <View style={styles.sidebarScrollWrap}>
+          <ScrollView
+            ref={scrollRef}
+            style={styles.sidebarScroll}
+            contentContainerStyle={styles.sidebarScrollContent}
+            showsVerticalScrollIndicator
+            scrollEventThrottle={16}
+            onScroll={(e) => {
+              metrics.current.y = e.nativeEvent.contentOffset.y;
+              updateEdges();
+            }}
+            onLayout={(e) => {
+              metrics.current.viewH = e.nativeEvent.layout.height;
+              updateEdges();
+            }}
+            onContentSizeChange={(_w, h) => {
+              metrics.current.contentH = h;
+              updateEdges();
+            }}
+            {...({ dataSet: { vdNavScroll: "1" } } as object)}
           >
-            <Text
+            <Pressable
+              accessibilityRole="button"
+              accessibilityState={{ selected: isActive(OVERVIEW.name) }}
+              onPress={() => go(OVERVIEW.name)}
               style={[
-                styles.sidebarItemText,
-                isActive(OVERVIEW.name) && styles.sidebarItemTextActive,
+                styles.sidebarItem,
+                isActive(OVERVIEW.name) && styles.sidebarItemActive,
               ]}
             >
-              {OVERVIEW.label}
-            </Text>
-          </Pressable>
+              <Text
+                style={[
+                  styles.sidebarItemText,
+                  isActive(OVERVIEW.name) && styles.sidebarItemTextActive,
+                ]}
+              >
+                {OVERVIEW.label}
+              </Text>
+            </Pressable>
 
-          {GROUPS.map((group) => (
-            <View key={group.section} style={{ marginTop: Spacing.lg }}>
-              <Text style={styles.sectionLabel}>{group.section}</Text>
-              {group.items.map((item) => (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: isActive(item.name) }}
-                  key={item.name}
-                  onPress={() => go(item.name)}
-                  style={[
-                    styles.sidebarItem,
-                    isActive(item.name) && styles.sidebarItemActive,
-                  ]}
-                >
-                  <Text
+            {GROUPS.map((group) => (
+              <View key={group.section} style={{ marginTop: Spacing.lg }}>
+                <Text style={styles.sectionLabel}>{group.section}</Text>
+                {group.items.map((item) => (
+                  <Pressable
+                    accessibilityRole="button"
+                    accessibilityState={{ selected: isActive(item.name) }}
+                    key={item.name}
+                    onPress={() => go(item.name)}
                     style={[
-                      styles.sidebarItemText,
-                      isActive(item.name) && styles.sidebarItemTextActive,
+                      styles.sidebarItem,
+                      isActive(item.name) && styles.sidebarItemActive,
                     ]}
                   >
-                    {item.label}
-                  </Text>
-                </Pressable>
-              ))}
+                    <Text
+                      style={[
+                        styles.sidebarItemText,
+                        isActive(item.name) && styles.sidebarItemTextActive,
+                      ]}
+                    >
+                      {item.label}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
+            ))}
+          </ScrollView>
+
+          {edges.canScrollUp && (
+            <View
+              pointerEvents="box-none"
+              style={[styles.fade, styles.fadeTop]}
+            >
+              <View pointerEvents="none">
+                {FADE_STEPS.map((a) => (
+                  <View
+                    key={a}
+                    style={{
+                      height: 5,
+                      backgroundColor: `rgba(255,255,255,${a})`,
+                    }}
+                  />
+                ))}
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Scroll the menu up"
+                onPress={() => scrollByStep(-1)}
+                style={styles.scrollCue}
+              >
+                <Ionicons name="chevron-up" size={14} color={COLORS.slate} />
+              </Pressable>
             </View>
-          ))}
-        </ScrollView>
+          )}
+          {edges.canScrollDown && (
+            <View
+              pointerEvents="box-none"
+              style={[styles.fade, styles.fadeBottom]}
+            >
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Scroll the menu down for more"
+                onPress={() => scrollByStep(1)}
+                style={styles.scrollCue}
+              >
+                <Ionicons name="chevron-down" size={14} color={COLORS.slate} />
+              </Pressable>
+              <View pointerEvents="none">
+                {[...FADE_STEPS].reverse().map((a) => (
+                  <View
+                    key={a}
+                    style={{
+                      height: 5,
+                      backgroundColor: `rgba(255,255,255,${a})`,
+                    }}
+                  />
+                ))}
+              </View>
+            </View>
+          )}
+        </View>
 
         {/* Sign out lived only inside the Settings screen before — a few
             taps away and easy to lose track of. Pinning it here makes it
@@ -197,11 +311,32 @@ const styles = StyleSheet.create({
     borderRightWidth: 1,
     borderRightColor: COLORS.border,
   },
+  sidebarHeader: {
+    paddingTop: Spacing.xl,
+    paddingBottom: Spacing.md,
+    paddingHorizontal: Spacing.lg,
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.border,
+  },
+  sidebarScrollWrap: { flex: 1 },
   sidebarScroll: { flex: 1 },
   sidebarScrollContent: {
-    paddingTop: Spacing.xxl,
+    paddingTop: Spacing.md,
     paddingHorizontal: Spacing.lg,
     paddingBottom: Spacing.lg,
+  },
+  fade: { position: "absolute", left: 0, right: 0, alignItems: "center" },
+  fadeTop: { top: 0 },
+  fadeBottom: { bottom: 0 },
+  scrollCue: {
+    width: 26,
+    height: 18,
+    borderRadius: 9,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
   },
   sidebarFooter: {
     borderTopWidth: 1,

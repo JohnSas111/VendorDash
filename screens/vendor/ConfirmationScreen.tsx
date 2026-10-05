@@ -44,7 +44,7 @@ export default function ConfirmationScreen() {
       <View style={styles.buttonWrap}>
         <PrimaryButton
           label="View my bookings"
-          onPress={() => router.replace("/(vendor)/my-bookings")}
+          onPress={() => router.replace("/(vendor)/(tabs)/my-bookings")}
         />
       </View>
     </View>

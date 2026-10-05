@@ -1,12 +1,12 @@
 import { PressableButton } from "@/components/PressableButton";
 import { Spacing, Typography } from "@/constants/theme";
 import { BREAKPOINT, COLORS, shared, statusColors } from "@/lib/organizerTheme";
+import { openSignedImage } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
-  Linking,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -93,10 +93,17 @@ export default function VendorVerificationScreen() {
     load();
   };
 
-  const openPermit = (url: string) => {
-    Linking.openURL(url).catch(() => {
-      showToast("Couldn't open that permit link.", "error");
-    });
+  const openPermit = async (path: string) => {
+    // The permit is in a private bucket. The database lets an organizer open it
+    // for a vendor who is not verified yet, or who has a booking at one of
+    // their venues.
+    const ok = await openSignedImage("business-permits", path);
+    if (!ok) {
+      showToast(
+        "Couldn't open that permit. The file may be missing, or this vendor is already verified and has no booking at your venue.",
+        "error",
+      );
+    }
   };
 
   return (

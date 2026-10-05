@@ -40,9 +40,8 @@ export default function StallDetailScreen() {
     async function load() {
       if (!stallId || !sessionId) return;
 
-      // Free up any holds that expired since they were created, so we're
-      // checking availability against accurate, current data.
-      await supabase.rpc("expire_stale_bookings");
+      // Lapsed holds are released by a scheduled job on the server, and the
+      // availability check below already ignores holds that have run out.
 
       const { data: stallData, error: stallError } = await supabase
         .from("stalls")
@@ -123,11 +122,6 @@ export default function StallDetailScreen() {
       router.replace("/(auth)/login");
       return;
     }
-
-    // Sweep right before attempting the insert too — closes the gap where
-    // someone else's stale hold expired between this screen loading and
-    // the vendor pressing Continue.
-    await supabase.rpc("expire_stale_bookings");
 
     // create_booking checks that you're allowed to book (profile/permit,
     // one stall per market, open-request limit, stall and session are valid),

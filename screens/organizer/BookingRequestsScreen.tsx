@@ -11,6 +11,7 @@ import {
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
+import { ownerPrefix, vendorDisplay } from "@/lib/uxHelpers";
 import { Ionicons } from "@expo/vector-icons";
 import { useRouter } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
@@ -29,7 +30,8 @@ type BookingRow = {
   requested_at: string;
   attending_days: string[];
   vendor_id: string;
-  vendor_name: string;
+  vendor_name: string; // business name (falls back to the person's name)
+  owner_name: string;
   // Only verified vendors can be approved (approve_booking enforces this).
   vendor_verified: boolean;
   stall_number: string;
@@ -70,7 +72,7 @@ export default function BookingRequestsScreen() {
     let query = supabase
       .from("bookings")
       .select(
-        "id, status, requested_at, attending_days, vendor_id, profiles!bookings_vendor_id_fkey(full_name, vendor_details!vendor_details_id_fkey(is_verified)), stalls!inner(stall_number, venue_id)",
+        "id, status, requested_at, attending_days, vendor_id, profiles!bookings_vendor_id_fkey(full_name, vendor_details!vendor_details_id_fkey(is_verified, business_name)), stalls!inner(stall_number, venue_id)",
       )
       .eq("stalls.venue_id", venue.id)
       .order("requested_at", { ascending: false });
@@ -86,13 +88,15 @@ export default function BookingRequestsScreen() {
         const details = Array.isArray(row.profiles?.vendor_details)
           ? row.profiles.vendor_details[0]
           : row.profiles?.vendor_details;
+        const who = vendorDisplay(row.profiles);
         return {
           id: row.id,
           status: row.status,
           requested_at: row.requested_at,
           attending_days: row.attending_days ?? [],
           vendor_id: row.vendor_id,
-          vendor_name: row.profiles?.full_name ?? "Unknown vendor",
+          vendor_name: who.name,
+          owner_name: who.owner,
           // Missing details count as NOT verified (safe default).
           vendor_verified: details?.is_verified === true,
           stall_number: row.stalls?.stall_number ?? "—",
@@ -177,6 +181,7 @@ export default function BookingRequestsScreen() {
     (r) =>
       !search.trim() ||
       r.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
+      r.owner_name.toLowerCase().includes(search.toLowerCase()) ||
       r.stall_number.toLowerCase().includes(search.toLowerCase()),
   );
 
@@ -258,7 +263,8 @@ export default function BookingRequestsScreen() {
                 <View style={{ flex: 1 }}>
                   <Text style={shared.rowTitle}>{b.vendor_name}</Text>
                   <Text style={shared.rowSubtitle}>
-                    Stall {b.stall_number} ·{" "}
+                    {ownerPrefix(b.vendor_name, b.owner_name)}Stall{" "}
+                    {b.stall_number} ·{" "}
                     {b.attending_days.join(", ") || "no days set"} · requested{" "}
                     {formatDate(b.requested_at)}
                   </Text>
@@ -389,7 +395,9 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   searchIcon: { position: "absolute", left: Spacing.md, zIndex: 1 },
-  searchInput: { paddingLeft: Spacing.xxl },
+  // The icon sits at 12px and is 16px wide, so the text must start after
+  // it (12 + 16 + a small gap), not on top of it.
+  searchInput: { paddingLeft: Spacing.xxxl + Spacing.xs },
   list: { gap: Spacing.sm },
   badgeRow: {
     flexDirection: "row",

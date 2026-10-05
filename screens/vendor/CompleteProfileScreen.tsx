@@ -1,7 +1,10 @@
 // PATH: screens/vendor/CompleteProfileScreen.tsx  (replace the file at exactly this path)
 import { InputField } from "@/components/InputField";
+import { KeyboardScreen } from "@/components/KeyboardScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import { goBackSafely } from "@/lib/navigation";
+import { useSignedImageUrl } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { pickAndUploadImage } from "@/lib/upload";
@@ -20,6 +23,12 @@ export default function CompleteProfileScreen() {
   const [initialLoading, setInitialLoading] = useState(true);
 
   const { showToast } = useToast();
+  // The permit is stored as a path in a private bucket; show it through a
+  // short-lived signed link.
+  const { url: permitPreview, failed: permitPreviewFailed } = useSignedImageUrl(
+    "business-permits",
+    permitUrl,
+  );
 
   useEffect(() => {
     async function loadExisting() {
@@ -118,7 +127,7 @@ export default function CompleteProfileScreen() {
     }
 
     showToast("Your profile has been updated.", "success");
-    router.back();
+    goBackSafely("/(vendor)/(tabs)/home");
   }
 
   if (initialLoading) {
@@ -130,7 +139,7 @@ export default function CompleteProfileScreen() {
   }
 
   return (
-    <View style={styles.container}>
+    <KeyboardScreen style={styles.container}>
       <Text style={styles.title}>Complete your profile</Text>
       <Text style={styles.subtitle}>
         Vendors need this before booking a stall
@@ -163,12 +172,24 @@ export default function CompleteProfileScreen() {
       >
         {permitUrl ? (
           <View style={styles.uploadedRow}>
-            <Image
-              accessibilityLabel="Uploaded business permit preview"
-              source={{ uri: permitUrl }}
-              style={styles.thumbnail}
-            />
-            <Text style={styles.uploadedText}>Tap to replace</Text>
+            {permitPreview ? (
+              <Image
+                accessibilityLabel="Uploaded business permit preview"
+                source={{ uri: permitPreview }}
+                style={styles.thumbnail}
+              />
+            ) : (
+              <Ionicons
+                name="document-text-outline"
+                size={32}
+                color={Colors.textMuted}
+              />
+            )}
+            <Text style={styles.uploadedText}>
+              {permitPreviewFailed
+                ? "Permit uploaded (preview unavailable). Tap to replace"
+                : "Tap to replace"}
+            </Text>
           </View>
         ) : (
           <View style={styles.uploadPrompt}>
@@ -189,7 +210,7 @@ export default function CompleteProfileScreen() {
         onPress={handleSave}
         loading={loading}
       />
-    </View>
+    </KeyboardScreen>
   );
 }
 

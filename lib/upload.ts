@@ -10,6 +10,21 @@ import * as FileSystem from "expo-file-system/legacy";
 import * as ImagePicker from "expo-image-picker";
 import { supabase } from "./supabase";
 
+// The storage buckets accept images up to this size (the database enforces
+// it too). Checking here lets us show a friendly message before uploading.
+export const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+
+function friendlyUploadError(message: string): string {
+  const m = message.toLowerCase();
+  if (m.includes("maximum allowed size") || m.includes("too large")) {
+    return "That image is too large. Please choose one under 5 MB.";
+  }
+  if (m.includes("mime type") || m.includes("not supported")) {
+    return "That file type isn't allowed. Please choose a JPG, PNG or WebP photo.";
+  }
+  return message;
+}
+
 export async function pickAndUploadImage(
   bucket: string,
   filePathWithoutExt: string,
@@ -34,6 +49,9 @@ export async function pickAndUploadImage(
   }
 
   const asset = result.assets[0];
+  if (asset.fileSize && asset.fileSize > MAX_IMAGE_BYTES) {
+    throw new Error("That image is too large. Please choose one under 5 MB.");
+  }
   const fileExt = asset.uri.split(".").pop()?.toLowerCase() || "jpg";
   const filePath = `${filePathWithoutExt}.${fileExt}`;
 
@@ -49,7 +67,7 @@ export async function pickAndUploadImage(
     });
 
   if (error) {
-    throw error;
+    throw new Error(friendlyUploadError(error.message));
   }
 
   return filePath;

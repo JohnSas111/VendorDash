@@ -9,11 +9,14 @@ import {
   RADIUS,
   shared,
 } from "@/lib/organizerTheme";
+import { openSignedImage } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
+import { ownerPrefix, vendorDisplay } from "@/lib/uxHelpers";
 import { Ionicons } from "@expo/vector-icons";
 import { useCallback, useEffect, useState } from "react";
 import {
+  Pressable,
   ScrollView,
   StyleSheet,
   Text,
@@ -28,10 +31,12 @@ type Session = {
   status: string;
 };
 type VendorSales = {
-  vendor_name: string;
+  vendor_name: string; // business name (falls back to the person's name)
+  owner_name: string;
   stall_number: string;
   gross_sales_cents: number;
   items_sold_count: number | null;
+  receipt_path: string | null;
 };
 
 export default function SalesReportsScreen() {
@@ -97,7 +102,7 @@ export default function SalesReportsScreen() {
       const { data, error } = await supabase
         .from("sales_submissions")
         .select(
-          "gross_sales_cents, items_sold_count, profiles!sales_submissions_vendor_id_fkey(full_name), bookings!inner(session_id, stalls(stall_number))",
+          "gross_sales_cents, items_sold_count, receipt_photo_url, profiles!sales_submissions_vendor_id_fkey(full_name, vendor_details!vendor_details_id_fkey(business_name)), bookings!inner(session_id, stalls(stall_number))",
         )
         .eq("bookings.session_id", selectedSessionId);
       if (error) {
@@ -106,10 +111,12 @@ export default function SalesReportsScreen() {
 
       setVendorRows(
         (data ?? []).map((row: any) => ({
-          vendor_name: row.profiles?.full_name ?? "Unknown vendor",
+          vendor_name: vendorDisplay(row.profiles).name,
+          owner_name: vendorDisplay(row.profiles).owner,
           stall_number: row.bookings?.stalls?.stall_number ?? "—",
           gross_sales_cents: row.gross_sales_cents,
           items_sold_count: row.items_sold_count,
+          receipt_path: row.receipt_photo_url ?? null,
         })),
       );
       setLoading(false);
@@ -238,7 +245,8 @@ export default function SalesReportsScreen() {
                       <View>
                         <Text style={shared.rowTitle}>{r.vendor_name}</Text>
                         <Text style={shared.rowSubtitle}>
-                          Stall {r.stall_number}
+                          {ownerPrefix(r.vendor_name, r.owner_name)}Stall{" "}
+                          {r.stall_number}
                         </Text>
                       </View>
                       <View style={styles.salesCol}>
@@ -249,6 +257,33 @@ export default function SalesReportsScreen() {
                           <Text style={shared.rowSubtitle}>
                             {r.items_sold_count} items
                           </Text>
+                        )}
+                        {r.receipt_path && (
+                          <Pressable
+                            accessibilityRole="link"
+                            style={styles.receiptLink}
+                            onPress={async () => {
+                              const ok = await openSignedImage(
+                                "sales-receipts",
+                                r.receipt_path!,
+                              );
+                              if (!ok) {
+                                showToast(
+                                  "Couldn't open that receipt.",
+                                  "error",
+                                );
+                              }
+                            }}
+                          >
+                            <Ionicons
+                              name="receipt-outline"
+                              size={13}
+                              color={COLORS.inkNavy}
+                            />
+                            <Text style={styles.receiptLinkText}>
+                              View receipt
+                            </Text>
+                          </Pressable>
                         )}
                       </View>
                     </View>
@@ -306,6 +341,18 @@ function ReportRowsSkeleton() {
 }
 
 const styles = StyleSheet.create({
+  receiptLink: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "flex-end",
+    gap: 4,
+    marginTop: 4,
+  },
+  receiptLinkText: {
+    color: COLORS.inkNavy,
+    fontSize: Typography.sm,
+    textDecorationLine: "underline",
+  },
   emptyStateSpacing: { marginTop: Spacing.lg },
   sessionPicker: { marginBottom: Spacing.lg },
   sessionPickerRow: { flexDirection: "row", gap: Spacing.sm },

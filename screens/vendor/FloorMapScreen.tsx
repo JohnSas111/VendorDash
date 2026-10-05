@@ -228,9 +228,8 @@ export default function FloorMapScreen() {
   const loadAll = useCallback(async () => {
     const requestId = ++requestRef.current;
     try {
-      // Release lapsed holds so they are cleaned up in the database too.
-      // (stall_availability already ignores lapsed holds either way.)
-      await supabase.rpc("expire_stale_bookings");
+      // Lapsed holds are released by a scheduled job on the server
+      // (and stall_availability ignores lapsed holds either way).
 
       const list = await fetchBookableSessions();
       if (requestId !== requestRef.current) return;

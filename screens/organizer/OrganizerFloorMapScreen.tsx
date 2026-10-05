@@ -1,5 +1,13 @@
+import { StallDetailsPanel } from "@/components/organizer/StallDetailsPanel";
 import { Radius, Shadow, Spacing, Typography } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
+import {
+  buildOverview,
+  buildStallPanel,
+  type PanelBooking,
+  type PanelStall,
+  type PanelTarget,
+} from "@/lib/floorMapPanel";
 import {
   BREAKPOINT,
   COLORS,
@@ -12,7 +20,9 @@ import {
 } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
+import { vendorDetails, vendorDisplay } from "@/lib/uxHelpers";
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useCallback, useEffect, useState } from "react";
 import {
   Pressable,
@@ -23,13 +33,8 @@ import {
   View,
 } from "react-native";
 
-type Stall = { id: string; stall_number: string; is_active: boolean };
-type BookingInfo = {
-  id: string;
-  status: string;
-  vendor_name: string;
-  attending_days: string[];
-};
+type Stall = PanelStall;
+type BookingInfo = PanelBooking;
 
 // Icon per status, matching the vendor Floor Map — status is never
 // conveyed by color alone.
@@ -71,7 +76,7 @@ export default function OrganizerFloorMapScreen() {
 
     const { data: stallRows, error: stallError } = await supabase
       .from("stalls")
-      .select("id, stall_number, is_active")
+      .select("id, stall_number, is_active, price_per_day_cents")
       .eq("venue_id", venue.id)
       .order("stall_number");
     if (stallError) {
@@ -104,7 +109,9 @@ export default function OrganizerFloorMapScreen() {
     const { data: bookingRows, error: bookingError } = await supabase
       .from("bookings")
       .select(
-        "id, stall_id, status, attending_days, profiles!bookings_vendor_id_fkey(full_name)",
+        "id, stall_id, status, attending_days, requested_at, payment_due_at, checked_in_at, " +
+          "profiles!bookings_vendor_id_fkey(full_name, vendor_details!vendor_details_id_fkey(business_name, category, is_verified)), " +
+          "payments(status, paid_at)",
       )
       .eq("session_id", session.id)
       .in("status", ["pending", "approved", "paid", "checked_in"]);
@@ -114,11 +121,24 @@ export default function OrganizerFloorMapScreen() {
 
     const map: Record<string, BookingInfo> = {};
     (bookingRows ?? []).forEach((b: any) => {
+      const who = vendorDisplay(b.profiles);
+      const details = vendorDetails(b.profiles);
+      const paidPayment = (b.payments ?? []).find(
+        (p: any) => p.status === "paid",
+      );
       map[b.stall_id] = {
         id: b.id,
+        stall_id: b.stall_id,
         status: b.status,
-        vendor_name: b.profiles?.full_name ?? "Unknown vendor",
         attending_days: b.attending_days ?? [],
+        requested_at: b.requested_at ?? null,
+        payment_due_at: b.payment_due_at ?? null,
+        checked_in_at: b.checked_in_at ?? null,
+        paid_at: paidPayment?.paid_at ?? null,
+        vendor_name: who.name,
+        owner_name: who.owner,
+        category: details?.category ?? null,
+        is_verified: details?.is_verified ?? false,
       };
     });
     setBookingsByStall(map);
@@ -150,8 +170,11 @@ export default function OrganizerFloorMapScreen() {
     );
   }
 
-  const selected = selectedStallId ? bookingsByStall[selectedStallId] : null;
   const selectedStall = stalls.find((s) => s.id === selectedStallId);
+  const panelModel = selectedStall
+    ? buildStallPanel(selectedStall, bookingsByStall[selectedStall.id])
+    : buildOverview(stalls, bookingsByStall, sessionLabel);
+  const goTo = (target: PanelTarget) => router.push(target);
 
   const rows: Stall[][] = [];
   for (let i = 0; i < stalls.length; i += STALLS_PER_ROW) {
@@ -162,7 +185,9 @@ export default function OrganizerFloorMapScreen() {
     <View style={{ flex: 1, flexDirection: isDesktop ? "row" : "column" }}>
       <ScrollView style={shared.screen} contentContainerStyle={shared.content}>
         <Text style={shared.title}>Floor Map</Text>
-        <Text style={shared.subtitle}>{sessionLabel} · read-only overview</Text>
+        <Text style={shared.subtitle}>
+          {sessionLabel} · tap a stall for details
+        </Text>
 
         {stalls.length === 0 ? (
           <View style={styles.emptyState}>
@@ -210,7 +235,11 @@ export default function OrganizerFloorMapScreen() {
                       return (
                         <Pressable
                           key={stall.id}
-                          onPress={() => setSelectedStallId(stall.id)}
+                          onPress={() =>
+                            setSelectedStallId((cur) =>
+                              cur === stall.id ? null : stall.id,
+                            )
+                          }
                           style={[
                             styles.tile,
                             { backgroundColor: bg, borderColor: fg },
@@ -240,18 +269,15 @@ export default function OrganizerFloorMapScreen() {
           </>
         )}
 
-        {!isDesktop && selected && selectedStall && (
+        {!isDesktop && (
           <View style={[shared.card, styles.mobileDetailCard]}>
-            <Text style={shared.rowTitle}>
-              Stall {selectedStall.stall_number}
-            </Text>
-            <Text style={shared.rowSubtitle}>{selected.vendor_name}</Text>
-            <Text style={shared.rowSubtitle}>
-              Booking status: {selected.status}
-            </Text>
-            <Text style={shared.rowSubtitle}>
-              Days: {selected.attending_days.join(", ") || "—"}
-            </Text>
+            <StallDetailsPanel
+              model={panelModel}
+              onNavigate={goTo}
+              onClose={
+                selectedStall ? () => setSelectedStallId(null) : undefined
+              }
+            />
           </View>
         )}
       </ScrollView>
@@ -259,34 +285,11 @@ export default function OrganizerFloorMapScreen() {
       {isDesktop && (
         <View style={styles.sidebar}>
           <Text style={[shared.sectionHeading, { marginTop: 0 }]}>Details</Text>
-          {selectedStall ? (
-            <View>
-              <Text style={shared.rowTitle}>
-                Stall {selectedStall.stall_number}
-              </Text>
-              {selected ? (
-                <>
-                  <Text style={shared.rowSubtitle}>{selected.vendor_name}</Text>
-                  <Text style={shared.rowSubtitle}>
-                    Booking status: {selected.status}
-                  </Text>
-                  <Text style={shared.rowSubtitle}>
-                    Days: {selected.attending_days.join(", ") || "—"}
-                  </Text>
-                </>
-              ) : (
-                <Text style={shared.rowSubtitle}>
-                  {selectedStall.is_active
-                    ? "No booking this session."
-                    : "Stall is deactivated."}
-                </Text>
-              )}
-            </View>
-          ) : (
-            <Text style={shared.emptyStateText}>
-              Tap a stall to see details.
-            </Text>
-          )}
+          <StallDetailsPanel
+            model={panelModel}
+            onNavigate={goTo}
+            onClose={selectedStall ? () => setSelectedStallId(null) : undefined}
+          />
         </View>
       )}
     </View>
@@ -368,7 +371,7 @@ const styles = StyleSheet.create({
   },
   mobileDetailCard: { marginTop: Spacing.xl },
   sidebar: {
-    width: 280,
+    width: 320,
     borderLeftWidth: 1,
     borderLeftColor: COLORS.border,
     padding: Spacing.xl,

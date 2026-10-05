@@ -13,6 +13,7 @@
 // screen serves both vendor and organizer accounts.
 
 import { InputField } from "@/components/InputField";
+import { KeyboardScreen } from "@/components/KeyboardScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Shadow, Spacing, Typography } from "@/constants/theme";
 import { supabase } from "@/lib/supabase";
@@ -67,7 +68,7 @@ export default function LoginScreen() {
     router.replace(
       profile?.role === "organizer"
         ? "/(organizer)/(tabs)/overview"
-        : "/(vendor)/home",
+        : "/(vendor)/(tabs)/home",
     );
   }
 
@@ -113,7 +114,7 @@ export default function LoginScreen() {
   );
 
   if (!isDesktop) {
-    return <View style={styles.container}>{form}</View>;
+    return <KeyboardScreen style={styles.container}>{form}</KeyboardScreen>;
   }
 
   return (
