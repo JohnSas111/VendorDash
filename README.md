@@ -1,119 +1,130 @@
-# VendorDash — Final Completion Package
+# VendorDash
 
-This finishes everything that was still missing from the vendor side:
-**file uploads** (business permit + receipt photo), **notifications**, and
-**QR check-in**. Organizer side remains excluded, per your earlier decision
-— say the word if you want that built too.
+A night-market booking app. **Vendors** (Android app) browse a stall map, request a
+stall, pay by GCash/Maya, show a QR code at check-in, and submit sales.
+**Organizers** (website) manage venues, sessions and stalls, approve bookings,
+check vendors in, handle refunds and read sales reports.
+
+School project. Built with Expo (React Native + Expo Router), Supabase
+(Auth, Postgres with row-level security, private Storage, pg_cron, Edge
+Functions) and PayMongo (test mode).
 
 ---
 
-## Part 1: New packages to install
+## Project layout
+
+| Folder                       | What is in it                                                                                 |
+| ---------------------------- | --------------------------------------------------------------------------------------------- |
+| `app/`                       | Expo Router routes. Each file is a one-line re-export.                                        |
+| `screens/`                   | The real screen code (`auth`, `vendor`, `organizer`).                                         |
+| `components/`, `lib/`        | Shared UI and helpers (Supabase client, storage, theme).                                      |
+| `supabase/migrations/`       | Database changes, in order.                                                                   |
+| `supabase/functions/`        | Edge Functions: `create-payment`, `paymongo-webhook`, `toggle-recurring`, `payment-redirect`. |
+| `supabase/storage-setup.sql` | Private storage buckets and vendor rules. **New projects only.**                              |
+| `test-toolkit/`              | Automated checks for the database, payments and app logic. Not part of the app.               |
+
+---
+
+## Run locally
 
 ```bash
-npx expo install expo-image-picker expo-file-system
-npm install base64-arraybuffer
-npx expo install react-native-svg
-npm install react-native-qrcode-svg
+npm install
+copy .env.example .env      # then fill in the two values (Windows cmd)
+npx expo start
 ```
+
+`.env` needs only:
+
+```
+EXPO_PUBLIC_SUPABASE_URL=...
+EXPO_PUBLIC_SUPABASE_ANON_KEY=...
+```
+
+These come from Supabase: Project settings, API. The anon key is meant to be
+public. **Never put a PayMongo key or the Supabase service-role key in `.env`
+or in the repository.** `.env` is ignored by git.
 
 ---
 
-## Part 2: Database setup (run once)
+## Database setup (new Supabase project)
 
-Open **Supabase SQL editor**, run the contents of `supabase/storage-setup.sql`
-(included in this package). This creates two storage buckets
-(`business-permits`, `sales-receipts`) with the correct access policies —
-vendors can only upload to their own folder, anyone can view (needed for
-displaying thumbnails in the app).
+1. In the SQL Editor, run every file in `supabase/migrations/` in name order.
+2. Run `supabase/storage-setup.sql` just before
+   `20261001000700_storage_organizer_read.sql`. It creates two **private**
+   buckets (`business-permits`, `sales-receipts`): images only, 5 MB.
+3. In Supabase Auth, keep **Confirm email OFF** (see Known limitations).
+4. Enable the `pg_cron` extension. Migration `…000500` schedules four jobs.
 
----
+Organizer accounts are created by the owner: add the user in Supabase Auth,
+then insert a row in `public.profiles` with `role = 'organizer'`, and a row
+in `public.venues` for that organizer.
 
-## Part 3: Files to ADD or REPLACE
-
-```
-lib/upload.ts                                  → NEW
-
-screens/vendor/CompleteProfileScreen.tsx       → REPLACE (real permit upload)
-screens/vendor/SalesSubmissionScreen.tsx       → REPLACE (real receipt upload)
-screens/vendor/VendorHomeScreen.tsx            → REPLACE (adds notification bell)
-screens/vendor/MyBookingsScreen.tsx            → REPLACE (upcoming cards link to QR check-in)
-screens/vendor/StallDetailScreen.tsx           → REPLACE (creates a notification on booking)
-screens/vendor/NotificationsScreen.tsx         → NEW
-screens/vendor/BookingDetailScreen.tsx         → NEW
-
-app/(vendor)/_layout.tsx                       → REPLACE (adds 2 new screens)
-app/(vendor)/complete-profile.tsx              → REPLACE (same content, just re-copy to be safe)
-app/(vendor)/sales-submission.tsx              → REPLACE
-app/(vendor)/home.tsx                          → REPLACE
-app/(vendor)/my-bookings.tsx                   → REPLACE
-app/(vendor)/stall-detail.tsx                  → REPLACE
-app/(vendor)/notifications.tsx                 → NEW
-app/(vendor)/booking-detail.tsx                → NEW
-
-supabase/functions/paymongo-webhook/index.ts   → REPLACE (adds payment notification)
-```
-
-Extract this zip directly into your project root (contents sit at the top
-level, no wrapper folder), let it merge/replace.
-
----
-
-## Part 4: Redeploy the updated Edge Function
-
-Since `paymongo-webhook` changed (it now also creates a notification), you
-need to redeploy it if you already set up PayMongo:
+## Edge Functions and secrets
 
 ```bash
-supabase functions deploy paymongo-webhook
+supabase functions deploy create-payment
+supabase functions deploy toggle-recurring
+supabase functions deploy payment-redirect
+supabase functions deploy paymongo-webhook --no-verify-jwt
+supabase secrets set PAYMONGO_SECRET_KEY=...
+supabase secrets set PAYMONGO_WEBHOOK_SECRET=...
 ```
 
-If you **haven't** set up PayMongo yet, this step happens naturally as part
-of the PayMongo setup guide from the earlier package — no extra action needed
-right now.
+The webhook must be public (no JWT) because PayMongo calls it. It verifies
+PayMongo's signature on the raw request body instead.
 
 ---
 
-## Part 5: What's now genuinely complete
+## Deploy
 
-- **Business permit upload** — real photo picker, uploads to Supabase
-  Storage, shows a thumbnail once uploaded, saved to
-  `vendor_details.business_permit_url`
-- **Receipt photo upload** — same pattern, on the Sales Submission screen
-- **Notifications** — a real inbox screen, with unread-count badge on the
-  Home bell icon. Two things now actually generate notifications:
-  - Submitting a booking → "Booking request submitted"
-  - Payment confirming (via the webhook) → "Payment confirmed"
-- **QR check-in** — tapping an upcoming booking on My Bookings opens a
-  Booking Detail screen showing a real QR code (encodes the booking ID),
-  once that booking is approved/paid. This is ready for an organizer to
-  scan — the actual scanner is organizer-side, still not built.
+Vendors use the **Android APK**. Organizers use the **website**.
+
+1. `npx eas-cli@latest login`, then `npx eas-cli@latest init`.
+2. In expo.dev, add the two `EXPO_PUBLIC_SUPABASE_*` environment variables
+   to the project (the cloud build cannot see your local `.env`).
+3. Website: `npx expo export --platform web`, then
+   `npx eas-cli@latest deploy --prod`.
+4. APK: `npx eas-cli@latest build --platform android --profile preview`.
+
+Website and APK must point to the **same** Supabase project.
 
 ---
 
-## What's still NOT built (by your explicit choice)
+## Security model (short)
 
-- **Organizer side entirely** — stall management, approvals, QR scanning,
-  revenue reports. The vendor app can generate a QR code, but nothing scans
-  it yet, since that's an organizer feature.
-- **Card payments** — only GCash/Maya work through PayMongo; cards need a
-  different integration (tokenization).
-- **Recurring booking automation** — the `is_recurring` flag saves, but no
-  background job actually re-books a stall automatically each week.
+- Row-level security is on for every table. Apps cannot write bookings,
+  payments, refunds, sales or the audit log directly. They call database
+  functions that check who the caller is and the booking status.
+- Payment amounts are calculated on the server. The webhook checks the
+  PayMongo signature and never charges a booking that is no longer payable.
+- Permits and receipts are private. Images open through signed links that
+  expire after 10 minutes. Organizers can read only files they need.
+- Scheduled jobs (hold expiry, no-show, auto-complete, session close) cannot
+  be called from the app.
+
+## Tests
+
+`test-toolkit/README.md` explains the automated checks and which ones you
+can run yourself.
 
 ---
 
-## Testing checklist
+## Known limitations
 
-1. Run the SQL in `supabase/storage-setup.sql`
-2. Install the 4 new packages
-3. Extract and merge the files
-4. `npx expo start -c`
-5. Go to **Settings → Complete/Edit profile**, tap the upload box, pick a
-   photo — should show a thumbnail after uploading
-6. Book a stall → check **Notifications** (bell icon) → should see "Booking
-   request submitted"
-7. On **My Bookings**, tap an upcoming booking → should show a real QR code
-   if the status is `paid` or `approved` (if it's still `pending`, you'll
-   see the "waiting" message instead — that's correct behavior)
-8. After a real or manually-updated payment, check Notifications again for
-   "Payment confirmed"
+- **Vendors must use the Android app.** Paying and the recurring switch call
+  Edge Functions that have no CORS headers, so they fail in a web browser.
+- **Confirm email must stay OFF.** Signup creates the account first and then
+  writes the profile from the app. With email confirmation on, the profile
+  would not be created.
+- **No password reset yet.**
+- **Organizer screens do not refresh on their own.** Reload the page to see
+  new data.
+- **QR scanning** is implemented and tested on the server, but not tested on a
+  physical device.
+- **Refunds are manual.** The organizer records the payout. No PayMongo refund
+  calls are made.
+- **No "money taken but booking not payable" queue.** A notification and an
+  audit event are created, but there is no screen for it.
+- **iOS is not set up** (needs a paid Apple developer account).
+- **Free-tier limits:** Supabase pauses idle free projects, and Expo free
+  builds are limited and slow.
