@@ -1,24 +1,3 @@
-// components/ConfirmModal.tsx
-//
-// Styled replacement for Alert.alert(title, message, [Cancel, Confirm])
-// destructive-confirmation dialogs — Alert.alert doesn't render on web via
-// react-native-web (lib/confirmDialog.ts falls back to window.confirm
-// there, which looks like the browser, not the app). This is a real modal
-// that looks the same on every platform.
-//
-// Usage: keep one <ConfirmModal> per screen and drive it with local state.
-//
-//   const [confirmVisible, setConfirmVisible] = useState(false);
-//
-//   <ConfirmModal
-//     visible={confirmVisible}
-//     title="Cancel booking?"
-//     message="This will release the stall so other vendors can book it."
-//     confirmLabel="Cancel booking"
-//     onConfirm={() => { setConfirmVisible(false); doCancel(); }}
-//     onDismiss={() => setConfirmVisible(false)}
-//   />
-
 import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
 import { Modal, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 

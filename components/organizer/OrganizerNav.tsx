@@ -1,8 +1,9 @@
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { Spacing } from "@/constants/theme";
+import { useOrganizerCounts } from "@/hooks/useOrganizerCounts";
 import { BREAKPOINT, COLORS, RADIUS } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
-import { scrollEdges } from "@/lib/uxHelpers";
+import { badgeLabel, scrollEdges } from "@/lib/uxHelpers";
 import { Ionicons } from "@expo/vector-icons";
 import { usePathname, useRouter } from "expo-router";
 import { useEffect, useRef, useState } from "react";
@@ -56,12 +57,38 @@ const FADE_STEPS = [0.96, 0.8, 0.6, 0.38, 0.16];
 
 const ALL_ITEMS: NavItem[] = [OVERVIEW, ...GROUPS.flatMap((g) => g.items)];
 
+// The small number shown next to a menu item that has something waiting.
+// Hidden when the number is 0.
+function NavBadge({ count, small }: { count: number; small?: boolean }) {
+  if (count <= 0) return null;
+  return (
+    <View style={[styles.badge, small && styles.badgeSmall]}>
+      <Text style={styles.badgeText}>{badgeLabel(count)}</Text>
+    </View>
+  );
+}
+
 export default function OrganizerNav() {
   const { width } = useWindowDimensions();
   const isDesktop = width >= BREAKPOINT;
   const router = useRouter();
   const pathname = usePathname(); // e.g. "/overview"
   const [signOutConfirmVisible, setSignOutConfirmVisible] = useState(false);
+
+  // Numbers for the menu badges (booking requests, refunds, verification).
+  const counts = useOrganizerCounts();
+  const badgeFor = (name: string): number =>
+    name === "booking-requests"
+      ? counts.bookings
+      : name === "vendor-verification"
+        ? counts.verification
+        : name === "refund-requests"
+          ? counts.refunds
+          : 0;
+  const itemLabel = (item: NavItem): string | undefined =>
+    badgeFor(item.name) > 0
+      ? `${item.label}, ${badgeFor(item.name)} waiting`
+      : undefined;
 
   // Is there more menu above / below the visible part? Shown as a fade, an
   // arrow and a thin scrollbar so a short window never hides items silently.
@@ -169,6 +196,7 @@ export default function OrganizerNav() {
                 {group.items.map((item) => (
                   <Pressable
                     accessibilityRole="button"
+                    accessibilityLabel={itemLabel(item)}
                     accessibilityState={{ selected: isActive(item.name) }}
                     key={item.name}
                     onPress={() => go(item.name)}
@@ -185,6 +213,7 @@ export default function OrganizerNav() {
                     >
                       {item.label}
                     </Text>
+                    <NavBadge count={badgeFor(item.name)} />
                   </Pressable>
                 ))}
               </View>
@@ -284,19 +313,23 @@ export default function OrganizerNav() {
       {ALL_ITEMS.map((item) => (
         <Pressable
           accessibilityRole="button"
+          accessibilityLabel={itemLabel(item)}
           accessibilityState={{ selected: isActive(item.name) }}
           key={item.name}
           onPress={() => go(item.name)}
           style={styles.mobileItem}
         >
-          <Text
-            style={[
-              styles.mobileItemText,
-              isActive(item.name) && styles.mobileItemTextActive,
-            ]}
-          >
-            {item.label}
-          </Text>
+          <View style={styles.mobileLabelRow}>
+            <Text
+              style={[
+                styles.mobileItemText,
+                isActive(item.name) && styles.mobileItemTextActive,
+              ]}
+            >
+              {item.label}
+            </Text>
+            <NavBadge count={badgeFor(item.name)} small />
+          </View>
           {isActive(item.name) && <View style={styles.mobileIndicator} />}
         </Pressable>
       ))}
@@ -380,10 +413,30 @@ const styles = StyleSheet.create({
     borderRadius: RADIUS.sm,
     marginBottom: 2,
     minHeight: 40,
-    justifyContent: "center",
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
   },
   sidebarItemActive: { backgroundColor: COLORS.paper },
   sidebarItemText: { fontSize: 14, color: COLORS.slate, fontWeight: "500" },
+  // Amber fill with dark text: readable, and amber already means "needs a look".
+  badge: {
+    minWidth: 20,
+    height: 20,
+    borderRadius: 10,
+    paddingHorizontal: 6,
+    alignItems: "center",
+    justifyContent: "center",
+    backgroundColor: COLORS.amber,
+  },
+  badgeSmall: {
+    minWidth: 16,
+    height: 16,
+    borderRadius: 8,
+    paddingHorizontal: 4,
+    marginLeft: 4,
+  },
+  badgeText: { fontSize: 11, fontWeight: "700", color: COLORS.inkNavy },
   sidebarItemTextActive: { color: COLORS.inkNavy, fontWeight: "700" },
 
   mobileBar: {
@@ -398,6 +451,7 @@ const styles = StyleSheet.create({
     paddingHorizontal: 12,
     alignItems: "center",
   },
+  mobileLabelRow: { flexDirection: "row", alignItems: "center" },
   mobileItemText: { fontSize: 12, color: COLORS.slate, fontWeight: "500" },
   mobileItemTextActive: { color: COLORS.inkNavy, fontWeight: "700" },
   mobileIndicator: {

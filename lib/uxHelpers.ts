@@ -83,3 +83,39 @@ export function splitContainerStyle<T extends Record<string, any>>(
     content: content as Omit<T, "flex" | "backgroundColor">,
   };
 }
+
+// ---------------------------------------------------------------------
+// Organizer sidebar badges: the numbers of things waiting for the organizer.
+// The server function organizer_attention_counts() returns one row; this
+// turns whatever came back (array, object, null, odd values) into three safe
+// whole numbers, so a bad answer can never show "NaN" or a negative badge.
+// ---------------------------------------------------------------------
+export type AttentionCounts = {
+  bookings: number;
+  refunds: number;
+  verification: number;
+};
+
+export const NO_COUNTS: AttentionCounts = {
+  bookings: 0,
+  refunds: 0,
+  verification: 0,
+};
+
+export function toCounts(data: any): AttentionCounts {
+  const row = Array.isArray(data) ? data[0] : data;
+  const whole = (v: any): number => {
+    const n = Number(v);
+    return Number.isFinite(n) && n > 0 ? Math.floor(n) : 0;
+  };
+  return {
+    bookings: whole(row?.pending_bookings),
+    refunds: whole(row?.pending_refunds),
+    verification: whole(row?.unverified_vendors),
+  };
+}
+
+// The text inside a badge: "5", or "99+" when the number would not fit.
+export function badgeLabel(count: number): string {
+  return count > 99 ? "99+" : String(count);
+}

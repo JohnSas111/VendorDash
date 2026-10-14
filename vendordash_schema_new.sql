@@ -1052,6 +1052,42 @@ $$;
 ALTER FUNCTION "public"."is_organizer"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."organizer_attention_counts"() RETURNS TABLE("pending_bookings" integer, "pending_refunds" integer, "unverified_vendors" integer)
+    LANGUAGE "plpgsql" STABLE SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_uid uuid := public._require_role('organizer');
+begin
+  return query
+  select
+    (select count(*)::integer
+       from public.bookings b
+       join public.stalls s on s.id = b.stall_id
+       join public.venues v on v.id = s.venue_id
+      where v.organizer_id = v_uid
+        and b.status = 'pending'
+        and (b.reservation_expires_at is null
+             or b.reservation_expires_at >= now())),
+    (select count(*)::integer
+       from public.refund_requests rr
+       join public.bookings b on b.id = rr.booking_id
+       join public.stalls s on s.id = b.stall_id
+       join public.venues v on v.id = s.venue_id
+      where v.organizer_id = v_uid
+        and rr.status in ('requested', 'approved')),
+    (select count(*)::integer
+       from public.vendor_details vd
+      where coalesce(vd.is_verified, false) = false
+        and vd.business_permit_url is not null
+        and btrim(vd.business_permit_url) <> '');
+end;
+$$;
+
+
+ALTER FUNCTION "public"."organizer_attention_counts"() OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."payment_apply_result"("p_source_id" "text", "p_outcome" "text", "p_paymongo_payment_id" "text", "p_amount_cents" integer) RETURNS "text"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -2640,6 +2676,11 @@ GRANT ALL ON FUNCTION "public"."expire_stale_bookings"() TO "service_role";
 REVOKE ALL ON FUNCTION "public"."is_organizer"() FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."is_organizer"() TO "authenticated";
 GRANT ALL ON FUNCTION "public"."is_organizer"() TO "service_role";
+
+
+
+REVOKE ALL ON FUNCTION "public"."organizer_attention_counts"() FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."organizer_attention_counts"() TO "authenticated";
 
 
 
