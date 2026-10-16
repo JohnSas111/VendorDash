@@ -1,8 +1,10 @@
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import { CARD_SHADOW, COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
+import { formatDateRange, isUpcoming } from "@/lib/vendorBookings";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
@@ -31,43 +33,6 @@ type BookingRow = {
   sales_submissions: { id: string }[] | null;
   refund_requests: { status: string; created_at: string }[] | null;
 };
-
-// A booking is "upcoming" only while it is still in play AND its market has
-// not finished. Everything else (completed, cancelled, rejected, expired,
-// no-show, or a market that is over) belongs in History.
-const ACTIVE_STATUSES = ["pending", "approved", "paid", "checked_in"];
-
-function two(n: number) {
-  return String(n).padStart(2, "0");
-}
-
-// Today's date (YYYY-MM-DD) in the venue's timezone (device date as a
-// fallback). Dates are compared as plain text, so a market that is on today
-// is never treated as already over.
-function todayIn(timeZone: string): string {
-  try {
-    const parts = new Intl.DateTimeFormat("en-US", {
-      timeZone,
-      year: "numeric",
-      month: "2-digit",
-      day: "2-digit",
-    }).formatToParts(new Date());
-    const get = (type: string) =>
-      parts.find((p) => p.type === type)?.value ?? "";
-    return `${get("year")}-${get("month")}-${get("day")}`;
-  } catch {
-    const d = new Date();
-    return `${d.getFullYear()}-${two(d.getMonth() + 1)}-${two(d.getDate())}`;
-  }
-}
-
-function isUpcoming(booking: BookingRow): boolean {
-  if (!ACTIVE_STATUSES.includes(booking.status)) return false;
-  const session = booking.market_sessions;
-  if (!session) return false;
-  const timezone = session.venues?.timezone ?? "Asia/Manila";
-  return session.sunday_date >= todayIn(timezone);
-}
 
 // The newest refund request for a booking, as a short line for the card.
 function refundNote(booking: BookingRow): string | null {
@@ -103,23 +68,6 @@ function upcomingHint(status: string): string {
     default:
       return "tap for details";
   }
-}
-
-// "2026-10-02" is read as a plain calendar date. new Date("2026-10-02") means
-// midnight UTC, which shows the day before on a device behind UTC, and the old
-// "Sep 29-4" label was ambiguous when a weekend crosses a month.
-function formatDateRange(friday: string, sunday: string) {
-  const [fy, fm, fd] = friday.split("-").map(Number);
-  const [sy, sm, sd] = sunday.split("-").map(Number);
-  if (!fy || !fm || !fd || !sy || !sm || !sd) return `${friday} – ${sunday}`;
-  const f = new Date(fy, fm - 1, fd);
-  const s = new Date(sy, sm - 1, sd);
-  const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-  // Same month: "Oct 2–4". Across months: "Sep 29 – Oct 4".
-  if (fm === sm && fy === sy) {
-    return `${f.toLocaleDateString("en-US", opts)}–${sd}`;
-  }
-  return `${f.toLocaleDateString("en-US", opts)} – ${s.toLocaleDateString("en-US", opts)}`;
 }
 
 function canCancel(booking: BookingRow): boolean {
@@ -459,9 +407,9 @@ const styles = StyleSheet.create({
     padding: Spacing.xl,
   },
   title: {
-    fontSize: Typography.xl,
-    fontWeight: "bold",
-    textAlign: "center",
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
     color: Colors.text,
     marginBottom: Spacing.lg,
   },
@@ -487,21 +435,25 @@ const styles = StyleSheet.create({
   metricCard: {
     flex: 1,
     backgroundColor: Colors.white,
-    borderRadius: Radius.sm,
-    padding: Spacing.md,
-    ...Shadow.sm,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    padding: Spacing.lg,
+    ...CARD_SHADOW,
   },
   metricLabel: { fontSize: Typography.xs, color: Colors.textMuted },
   metricValue: {
-    fontSize: Typography.md,
-    fontWeight: "600",
+    fontFamily: SERIF,
+    fontSize: 20,
+    fontWeight: "400",
     color: Colors.text,
     marginTop: Spacing.xs,
   },
   sectionLabel: {
-    fontSize: Typography.sm,
-    color: Colors.textMuted,
-    marginBottom: Spacing.sm,
+    fontFamily: SERIF,
+    fontSize: 18,
+    color: Colors.text,
+    marginBottom: Spacing.md,
   },
   emptyText: {
     fontSize: Typography.sm,
@@ -510,10 +462,12 @@ const styles = StyleSheet.create({
   },
   card: {
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    ...CARD_SHADOW,
+    padding: Spacing.lg,
     marginBottom: Spacing.sm,
-    ...Shadow.sm,
   },
   skeletonCard: { opacity: 0.6 },
   skeletonLine: {
@@ -527,8 +481,8 @@ const styles = StyleSheet.create({
     alignItems: "flex-start",
   },
   cardTitle: {
-    fontSize: Typography.base,
-    fontWeight: "600",
+    fontSize: Typography.md,
+    fontWeight: "700",
     color: Colors.text,
   },
   cardSubtitle: {
@@ -549,8 +503,10 @@ const styles = StyleSheet.create({
   salesButton: {
     marginTop: Spacing.sm,
     backgroundColor: Colors.background,
-    borderRadius: Radius.sm,
-    paddingVertical: Spacing.sm,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    borderRadius: RADIUS.sm,
+    paddingVertical: Spacing.md,
     alignItems: "center",
   },
   salesButtonText: {
@@ -573,8 +529,8 @@ const styles = StyleSheet.create({
     marginTop: Spacing.sm,
     borderWidth: 1,
     borderColor: Colors.booked,
-    borderRadius: Radius.sm,
-    paddingVertical: Spacing.sm,
+    borderRadius: RADIUS.sm,
+    paddingVertical: Spacing.md,
     alignItems: "center",
   },
   cancelButtonText: {

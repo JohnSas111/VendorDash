@@ -1,7 +1,15 @@
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { StatusBadge } from "@/components/StatusBadge";
-import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import {
+  CARD_SHADOW,
+  COLORS,
+  RADIUS,
+  SERIF,
+  shared,
+} from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
+import { formatDateRange, isUpcoming, payBefore } from "@/lib/vendorBookings";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
@@ -20,13 +28,17 @@ type BookingRow = {
   id: string;
   status: string;
   attending_days: string[];
-  stalls: { stall_number: string } | null;
+  reservation_expires_at: string | null;
+  stalls: { stall_number: string; price_per_day_cents: number } | null;
   market_sessions: {
     friday_date: string;
     sunday_date: string;
-    venues: { name: string } | null;
+    venues: { name: string; timezone: string | null } | null;
   } | null;
 };
+
+// How many active bookings Home shows; "See all" opens My Bookings.
+const HOME_LIMIT = 5;
 
 // Computes "Good morning / afternoon / evening" from the current hour
 // instead of the string that used to be hardcoded to "Good evening".
@@ -96,7 +108,7 @@ export default function VendorHomeScreen() {
     const { data: bookingData, error } = await supabase
       .from("bookings")
       .select(
-        "id, status, attending_days, stalls(stall_number), market_sessions(friday_date, sunday_date, venues(name))",
+        "id, status, attending_days, reservation_expires_at, stalls(stall_number, price_per_day_cents), market_sessions(friday_date, sunday_date, venues(name, timezone))",
       )
       .eq("vendor_id", userId)
       .order("requested_at", { ascending: false });
@@ -145,22 +157,6 @@ export default function VendorHomeScreen() {
     setRefreshing(false);
   }
 
-  // "2026-10-02" is read as a plain calendar date. new Date("2026-10-02")
-  // means midnight UTC, which shows the day before on a device behind UTC.
-  function formatDateRange(friday: string, sunday: string) {
-    const [fy, fm, fd] = friday.split("-").map(Number);
-    const [sy, sm, sd] = sunday.split("-").map(Number);
-    if (!fy || !fm || !fd || !sy || !sm || !sd) return `${friday} – ${sunday}`;
-    const f = new Date(fy, fm - 1, fd);
-    const s = new Date(sy, sm - 1, sd);
-    const opts: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
-    // Same month: "Oct 2–4". Across months: "Oct 30 – Nov 1".
-    if (fm === sm && fy === sy) {
-      return `${f.toLocaleDateString("en-US", opts)}–${sd}`;
-    }
-    return `${f.toLocaleDateString("en-US", opts)} – ${s.toLocaleDateString("en-US", opts)}`;
-  }
-
   function handleBrowsePress() {
     if (!profileComplete) {
       router.push("/(vendor)/complete-profile");
@@ -169,17 +165,52 @@ export default function VendorHomeScreen() {
     router.push("/(vendor)/floor-map");
   }
 
+  // Active = still in play and the market is not over (same rule as My Bookings).
+  const active = bookings
+    .filter(isUpcoming)
+    .sort((x, y) =>
+      (x.market_sessions?.friday_date ?? "").localeCompare(
+        y.market_sessions?.friday_date ?? "",
+      ),
+    );
+  const waitingCount = active.filter((b) => b.status === "approved").length;
+  const paidCount = active.filter((b) => b.status === "paid").length;
+  const shown = active.slice(0, HOME_LIMIT);
+  const stat = (n: number) => (loading ? "–" : String(n));
+
+  function handlePay(item: BookingRow) {
+    if (!item.stalls) return;
+    const amountCents =
+      item.stalls.price_per_day_cents * item.attending_days.length;
+    router.push({
+      pathname: "/(vendor)/payment",
+      params: {
+        bookingId: item.id,
+        amount: Math.round(amountCents).toString(),
+      },
+    });
+  }
+
+  function openBooking(item: BookingRow) {
+    router.push({
+      pathname: "/(vendor)/booking-detail",
+      params: { bookingId: item.id },
+    });
+  }
+
   return (
-    <View style={[styles.container, { paddingTop: insets.top + Spacing.md }]}>
-      <View style={styles.headerRow}>
-        <View>
-          <Text style={styles.greeting}>{getGreeting()}</Text>
-          <Text style={styles.name}>{businessName || "Vendor"}</Text>
-        </View>
-        <View style={styles.headerIcons}>
+    <View style={styles.container}>
+      <View style={[styles.header, { paddingTop: insets.top + Spacing.md }]}>
+        <View style={styles.headerRow}>
+          <View style={styles.headerText}>
+            <Text style={styles.greeting}>{getGreeting()}</Text>
+            <Text style={styles.name} numberOfLines={1}>
+              {businessName || "Vendor"}
+            </Text>
+          </View>
           <TouchableOpacity
-            style={styles.iconButton}
-            hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            style={styles.bellButton}
+            hitSlop={{ top: 8, bottom: 8, left: 8, right: 8 }}
             onPress={() => router.push("/(vendor)/notifications")}
             accessibilityRole="button"
             accessibilityLabel={
@@ -191,7 +222,7 @@ export default function VendorHomeScreen() {
             <Ionicons
               name="notifications-outline"
               size={22}
-              color={Colors.text}
+              color={Colors.white}
             />
             {unreadCount > 0 && (
               <View style={styles.badge}>
@@ -202,128 +233,259 @@ export default function VendorHomeScreen() {
             )}
           </TouchableOpacity>
         </View>
+
+        <View style={styles.tiles}>
+          <View style={[styles.tile, styles.tileDark]}>
+            <Text style={[styles.tileNumber, styles.tileNumberLight]}>
+              {stat(active.length)}
+            </Text>
+            <Text style={[styles.tileLabel, styles.tileLabelLight]}>
+              Active bookings
+            </Text>
+          </View>
+          <View style={[styles.tile, styles.tileAmber]}>
+            <Text style={styles.tileNumber}>{stat(waitingCount)}</Text>
+            <Text style={styles.tileLabel}>Waiting for payment</Text>
+          </View>
+          <View style={[styles.tile, styles.tileGreen]}>
+            <Text style={styles.tileNumber}>{stat(paidCount)}</Text>
+            <Text style={styles.tileLabel}>Paid and ready</Text>
+          </View>
+        </View>
       </View>
 
-      {loadError && (
-        <View style={styles.errorBanner}>
-          <Ionicons
-            name="alert-circle-outline"
-            size={16}
-            color={Colors.dangerText}
-          />
-          <Text style={styles.errorBannerText}>{loadError}</Text>
-        </View>
-      )}
-
-      {!loading && !profileComplete && (
-        <TouchableOpacity
-          accessibilityRole="button"
-          style={styles.banner}
-          onPress={() => router.push("/(vendor)/complete-profile")}
-        >
-          <Text style={styles.bannerTitle}>
-            Complete your profile to browse stalls
-          </Text>
-          <View style={styles.bannerActionRow}>
-            <Text style={styles.bannerAction}>Finish setup</Text>
-            <Ionicons name="chevron-forward" size={14} color={Colors.info} />
+      <View style={styles.body}>
+        {loadError && (
+          <View style={styles.errorBanner}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={16}
+              color={Colors.dangerText}
+            />
+            <Text style={styles.errorBannerText}>{loadError}</Text>
           </View>
-        </TouchableOpacity>
-      )}
+        )}
 
-      {!loading && profileComplete && !isVerified && (
-        <View style={styles.verifyNotice}>
-          <Ionicons
-            name="shield-outline"
-            size={16}
-            color={Colors.warningText}
-          />
-          <View style={styles.verifyTextWrap}>
-            <Text style={styles.verifyTitle}>
-              Your business isn’t verified yet
+        {!loading && !profileComplete && (
+          <TouchableOpacity
+            accessibilityRole="button"
+            style={styles.banner}
+            onPress={() => router.push("/(vendor)/complete-profile")}
+          >
+            <Text style={styles.bannerTitle}>
+              Complete your profile to browse stalls
             </Text>
-            <Text style={styles.verifyText}>
-              Until the organizer verifies it, reservation requests expire after
-              24 hours if not approved (72 hours once verified), and stalls
-              can’t auto-renew.
-            </Text>
+            <View style={styles.bannerActionRow}>
+              <Text style={styles.bannerAction}>Finish setup</Text>
+              <Ionicons
+                name="chevron-forward"
+                size={14}
+                color={Colors.warningText}
+              />
+            </View>
+          </TouchableOpacity>
+        )}
+
+        {!loading && profileComplete && !isVerified && (
+          <View style={styles.verifyNotice}>
+            <Ionicons
+              name="shield-outline"
+              size={16}
+              color={Colors.warningText}
+            />
+            <View style={styles.verifyTextWrap}>
+              <Text style={styles.verifyTitle}>
+                Your business isn’t verified yet
+              </Text>
+              <Text style={styles.verifyText}>
+                Until the organizer verifies it, reservation requests expire
+                after 24 hours if not approved (72 hours once verified), and
+                stalls can’t auto-renew.
+              </Text>
+            </View>
           </View>
+        )}
+
+        <View style={styles.sectionRow}>
+          <Text style={styles.sectionLabel}>Your bookings</Text>
+          {!loading && bookings.length > 0 && (
+            <TouchableOpacity
+              accessibilityRole="button"
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+              onPress={() => router.navigate("/(vendor)/(tabs)/my-bookings")}
+            >
+              <Text style={styles.seeAll}>See all</Text>
+            </TouchableOpacity>
+          )}
         </View>
-      )}
 
-      <Text style={styles.sectionLabel}>Your bookings</Text>
-
-      {loading ? (
-        <HomeSkeleton />
-      ) : (
-        <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
-          <FlatList
-            data={bookings}
-            keyExtractor={(item) => item.id}
-            refreshControl={
-              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-            }
-            ListEmptyComponent={
-              <View style={styles.emptyState}>
-                <Ionicons
-                  name="storefront-outline"
-                  size={32}
-                  color={Colors.textMuted}
-                  style={{ marginBottom: Spacing.sm }}
-                />
-                <Text style={styles.emptyTitle}>No bookings yet</Text>
-                <Text style={styles.emptyText}>
-                  {profileComplete
-                    ? "Reserve a stall for this weekend's market"
-                    : "Complete your profile first, then reserve a stall"}
-                </Text>
-                <PrimaryButton
-                  label={profileComplete ? "Book a stall" : "Complete profile"}
-                  onPress={handleBrowsePress}
-                />
-              </View>
-            }
-            renderItem={({ item }) => {
-              const dateLabel = item.market_sessions
-                ? formatDateRange(
-                    item.market_sessions.friday_date,
-                    item.market_sessions.sunday_date,
-                  )
-                : "Date unavailable";
-              const marketName = item.market_sessions?.venues?.name ?? "Market";
-
-              return (
-                <TouchableOpacity
-                  accessibilityRole="button"
-                  style={styles.card}
-                  activeOpacity={0.7}
-                  onPress={() =>
-                    router.push({
-                      pathname: "/(vendor)/booking-detail",
-                      params: { bookingId: item.id },
-                    })
-                  }
-                >
-                  <View style={styles.cardRow}>
-                    <Text style={styles.cardTitle}>{marketName}</Text>
-                    <StatusBadge status={item.status} />
-                  </View>
-                  <Text style={styles.cardSubtitle}>
-                    {dateLabel} · Stall {item.stalls?.stall_number ?? "—"} · tap
-                    for details
+        {loading ? (
+          <HomeSkeleton />
+        ) : (
+          <Animated.View style={{ flex: 1, opacity: fadeAnim }}>
+            <FlatList
+              data={shown}
+              keyExtractor={(item) => item.id}
+              refreshControl={
+                <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+              }
+              ListEmptyComponent={
+                <View style={styles.emptyState}>
+                  <Ionicons
+                    name="storefront-outline"
+                    size={32}
+                    color={Colors.textMuted}
+                    style={{ marginBottom: Spacing.sm }}
+                  />
+                  <Text style={styles.emptyTitle}>No active bookings</Text>
+                  <Text style={styles.emptyText}>
+                    {profileComplete
+                      ? "Reserve a stall for this weekend's market"
+                      : "Complete your profile first, then reserve a stall"}
                   </Text>
-                </TouchableOpacity>
-              );
-            }}
-          />
-        </Animated.View>
-      )}
+                  <PrimaryButton
+                    label={
+                      profileComplete ? "Book a stall" : "Complete profile"
+                    }
+                    onPress={handleBrowsePress}
+                  />
+                </View>
+              }
+              renderItem={({ item }) => {
+                const dateLabel = item.market_sessions
+                  ? formatDateRange(
+                      item.market_sessions.friday_date,
+                      item.market_sessions.sunday_date,
+                    )
+                  : "Date unavailable";
+                const marketName =
+                  item.market_sessions?.venues?.name ?? "Market";
+                const daysLabel = item.attending_days
+                  ?.map((d) => d.charAt(0).toUpperCase() + d.slice(1, 3))
+                  .join(", ");
+                const deadline = payBefore(
+                  item.reservation_expires_at,
+                  item.market_sessions?.venues?.timezone,
+                );
+                const isPaid =
+                  item.status === "paid" || item.status === "checked_in";
+                const needsPayment = item.status === "approved";
 
-      {!loading && (
-        <View style={{ marginTop: Spacing.md }}>
-          <PrimaryButton label="Browse markets" onPress={handleBrowsePress} />
-        </View>
-      )}
+                return (
+                  <View style={styles.card}>
+                    <TouchableOpacity
+                      accessibilityRole="button"
+                      activeOpacity={0.7}
+                      onPress={() => openBooking(item)}
+                    >
+                      <View style={styles.cardTop}>
+                        <View
+                          style={[
+                            styles.cardIcon,
+                            isPaid
+                              ? styles.cardIconGreen
+                              : styles.cardIconAmber,
+                          ]}
+                        >
+                          <Ionicons
+                            name={
+                              isPaid
+                                ? "checkmark-circle-outline"
+                                : "location-outline"
+                            }
+                            size={22}
+                            color={
+                              isPaid ? Colors.availableText : Colors.warningText
+                            }
+                          />
+                        </View>
+                        <View style={styles.cardTitleWrap}>
+                          <Text style={styles.cardTitle} numberOfLines={1}>
+                            {marketName}
+                          </Text>
+                          <Text style={styles.cardSubtitle} numberOfLines={1}>
+                            Stall {item.stalls?.stall_number ?? "—"} ·{" "}
+                            {daysLabel || dateLabel}
+                          </Text>
+                        </View>
+                        <StatusBadge status={item.status} />
+                      </View>
+                    </TouchableOpacity>
+
+                    {needsPayment && (
+                      <>
+                        <View style={styles.noteRow}>
+                          <Ionicons
+                            name="time-outline"
+                            size={16}
+                            color={Colors.warningText}
+                          />
+                          <Text style={styles.noteAmber}>
+                            {deadline
+                              ? `Pay before ${deadline} to keep your stall`
+                              : "Pay to keep your stall"}
+                          </Text>
+                        </View>
+                        {item.stalls && (
+                          <TouchableOpacity
+                            accessibilityRole="button"
+                            activeOpacity={0.8}
+                            style={styles.payButton}
+                            onPress={() => handlePay(item)}
+                          >
+                            <Text style={styles.payButtonText}>Pay now</Text>
+                          </TouchableOpacity>
+                        )}
+                      </>
+                    )}
+
+                    {item.status === "pending" && (
+                      <View style={styles.noteRow}>
+                        <Ionicons
+                          name="time-outline"
+                          size={16}
+                          color={Colors.warningText}
+                        />
+                        <Text style={styles.noteAmber}>
+                          Waiting for the organizer to approve
+                        </Text>
+                      </View>
+                    )}
+
+                    {isPaid && (
+                      <TouchableOpacity
+                        accessibilityRole="button"
+                        activeOpacity={0.7}
+                        style={styles.qrRow}
+                        onPress={() => openBooking(item)}
+                      >
+                        <Text style={styles.noteGreen}>
+                          {item.status === "paid"
+                            ? "Show your QR code at check-in"
+                            : "You are checked in"}
+                        </Text>
+                        <Text style={styles.viewQr}>View QR</Text>
+                      </TouchableOpacity>
+                    )}
+                  </View>
+                );
+              }}
+            />
+          </Animated.View>
+        )}
+
+        {!loading && (
+          <TouchableOpacity
+            accessibilityRole="button"
+            activeOpacity={0.85}
+            style={styles.findButton}
+            onPress={handleBrowsePress}
+          >
+            <Ionicons name="add" size={20} color={Colors.white} />
+            <Text style={styles.findButtonText}>Find a stall</Text>
+          </TouchableOpacity>
+        )}
+      </View>
     </View>
   );
 }
@@ -349,46 +511,83 @@ function HomeSkeleton() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-    padding: Spacing.xl,
+  container: { flex: 1, backgroundColor: Colors.background },
+  // Dark header with the three number tiles.
+  header: {
+    backgroundColor: COLORS.dark,
+    borderBottomLeftRadius: 36,
+    borderBottomRightRadius: 36,
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing.xl,
   },
   headerRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
-    marginBottom: Spacing.md,
+    alignItems: "center",
+    marginBottom: Spacing.lg,
   },
-  greeting: { fontSize: Typography.xs, color: Colors.textMuted },
-  name: { fontSize: Typography.md, fontWeight: "500", color: Colors.text },
-  headerIcons: { flexDirection: "row", gap: Spacing.md },
-  iconButton: {
-    position: "relative",
-    width: 44,
-    height: 44,
+  headerText: { flex: 1, marginRight: Spacing.md },
+  greeting: { fontSize: Typography.base, color: COLORS.onDark },
+  name: {
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
+    color: Colors.white,
+  },
+  bellButton: {
+    width: 46,
+    height: 46,
+    borderRadius: 23,
+    backgroundColor: "#2B2B2B",
     alignItems: "center",
     justifyContent: "center",
   },
   badge: {
     position: "absolute",
-    top: 4,
-    right: 4,
-    backgroundColor: Colors.booked,
-    borderRadius: Radius.sm,
-    minWidth: 16,
-    height: 16,
+    top: -2,
+    right: -2,
+    backgroundColor: Colors.reserved,
+    borderRadius: Radius.lg,
+    minWidth: 18,
+    height: 18,
     alignItems: "center",
     justifyContent: "center",
-    paddingHorizontal: 3,
+    paddingHorizontal: 4,
   },
-  badgeText: { color: Colors.white, fontSize: 9, fontWeight: "700" },
+  badgeText: { color: Colors.text, fontSize: 10, fontWeight: "700" },
+  tiles: { flexDirection: "row", gap: Spacing.sm },
+  tile: {
+    flex: 1,
+    borderRadius: RADIUS.sm + 4,
+    paddingVertical: Spacing.md,
+    paddingHorizontal: Spacing.md,
+    minHeight: 84,
+    justifyContent: "space-between",
+  },
+  tileDark: { backgroundColor: "#2B2B2B" },
+  tileAmber: { backgroundColor: Colors.reserved },
+  tileGreen: { backgroundColor: Colors.available },
+  tileNumber: {
+    fontFamily: SERIF,
+    fontSize: 26,
+    fontWeight: "400",
+    color: Colors.text,
+  },
+  tileNumberLight: { color: Colors.white },
+  tileLabel: { fontSize: Typography.sm, fontWeight: "600", color: Colors.text },
+  tileLabelLight: { color: COLORS.onDark },
+  body: {
+    flex: 1,
+    paddingHorizontal: Spacing.xl,
+    paddingTop: Spacing.lg,
+    paddingBottom: Spacing.md,
+  },
   errorBanner: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.sm,
     backgroundColor: Colors.dangerLight,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     padding: Spacing.md,
     marginBottom: Spacing.md,
   },
@@ -398,10 +597,10 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   banner: {
-    backgroundColor: Colors.infoLight,
-    borderRadius: Radius.sm,
+    backgroundColor: Colors.warningLight,
+    borderRadius: RADIUS.sm,
     padding: Spacing.md,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
@@ -409,7 +608,7 @@ const styles = StyleSheet.create({
   bannerTitle: {
     fontSize: Typography.sm,
     fontWeight: "600",
-    color: Colors.info,
+    color: Colors.warningText,
     flex: 1,
     marginRight: Spacing.sm,
   },
@@ -417,16 +616,16 @@ const styles = StyleSheet.create({
   bannerAction: {
     fontSize: Typography.sm,
     fontWeight: "600",
-    color: Colors.info,
+    color: Colors.warningText,
   },
   verifyNotice: {
     flexDirection: "row",
     alignItems: "flex-start",
     gap: Spacing.sm,
     backgroundColor: Colors.warningLight,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     padding: Spacing.md,
-    marginBottom: Spacing.lg,
+    marginBottom: Spacing.md,
   },
   verifyTextWrap: { flex: 1 },
   verifyTitle: {
@@ -439,10 +638,17 @@ const styles = StyleSheet.create({
     color: Colors.warningText,
     marginTop: 2,
   },
-  sectionLabel: {
-    fontSize: Typography.sm,
-    color: Colors.textMuted,
-    marginBottom: Spacing.sm,
+  sectionRow: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "baseline",
+    marginBottom: Spacing.md,
+  },
+  sectionLabel: { fontFamily: SERIF, fontSize: 22, color: Colors.text },
+  seeAll: {
+    fontSize: Typography.base,
+    fontWeight: "700",
+    color: Colors.warningText,
   },
   emptyState: {
     alignItems: "center",
@@ -462,11 +668,13 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   card: {
-    borderRadius: Radius.md,
-    padding: Spacing.lg,
-    marginBottom: Spacing.sm,
     backgroundColor: Colors.white,
-    ...Shadow.sm,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    padding: Spacing.lg,
+    marginBottom: Spacing.md,
+    ...CARD_SHADOW,
   },
   skeletonCard: { opacity: 0.6 },
   skeletonLine: {
@@ -474,19 +682,67 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xs,
     backgroundColor: Colors.borderLight,
   },
-  cardRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
+  cardTop: { flexDirection: "row", alignItems: "center", gap: Spacing.md },
+  cardIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    alignItems: "center",
+    justifyContent: "center",
   },
-  cardTitle: {
-    fontSize: Typography.base,
-    fontWeight: "500",
-    color: Colors.text,
-  },
+  cardIconAmber: { backgroundColor: Colors.warningLight },
+  cardIconGreen: { backgroundColor: Colors.successLight },
+  cardTitleWrap: { flex: 1 },
+  cardTitle: { fontFamily: SERIF, fontSize: 18, color: Colors.text },
   cardSubtitle: {
-    fontSize: Typography.sm,
+    fontSize: Typography.base,
     color: Colors.textMuted,
-    marginTop: Spacing.xs,
+    marginTop: 2,
+  },
+  noteRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  noteAmber: { flex: 1, fontSize: Typography.base, color: Colors.warningText },
+  noteGreen: {
+    flex: 1,
+    fontSize: Typography.base,
+    color: Colors.availableText,
+  },
+  payButton: {
+    ...shared.successButton,
+    minHeight: 48,
+    marginTop: Spacing.md,
+  },
+  payButtonText: { ...shared.successButtonText, fontSize: Typography.md },
+  qrRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    gap: Spacing.sm,
+    marginTop: Spacing.md,
+  },
+  viewQr: {
+    fontSize: Typography.base,
+    fontWeight: "700",
+    color: Colors.availableText,
+  },
+  findButton: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: Spacing.sm,
+    backgroundColor: Colors.text,
+    borderRadius: RADIUS.md,
+    minHeight: 54,
+    marginTop: Spacing.sm,
+    ...CARD_SHADOW,
+  },
+  findButtonText: {
+    color: Colors.white,
+    fontSize: Typography.md,
+    fontWeight: "700",
   },
 });

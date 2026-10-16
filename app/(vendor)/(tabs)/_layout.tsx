@@ -1,9 +1,21 @@
 import { Colors } from "@/constants/theme";
+import { Ionicons } from "@expo/vector-icons";
 import { Tabs } from "expo-router";
-import { Text, type ColorValue } from "react-native";
+import { StyleSheet, View } from "react-native";
 
-function TabIcon({ emoji, color }: { emoji: string; color: ColorValue }) {
-  return <Text style={{ fontSize: 18, color }}>{emoji}</Text>;
+// Tab icon: a line icon, with a soft amber pill behind the selected one.
+function TabIcon({
+  name,
+  focused,
+}: {
+  name: keyof typeof Ionicons.glyphMap;
+  focused: boolean;
+}) {
+  return (
+    <View style={[styles.pill, focused && styles.pillActive]}>
+      <Ionicons name={name} size={22} color={Colors.text} />
+    </View>
+  );
 }
 
 export default function VendorTabsLayout() {
@@ -24,23 +36,49 @@ export default function VendorTabsLayout() {
         name="home"
         options={{
           title: "Home",
-          tabBarIcon: ({ color }) => <TabIcon emoji="🏠" color={color} />,
+          tabBarIcon: ({ focused }) => (
+            <TabIcon
+              name={focused ? "home" : "home-outline"}
+              focused={focused}
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="my-bookings"
         options={{
           title: "My Bookings",
-          tabBarIcon: ({ color }) => <TabIcon emoji="📋" color={color} />,
+          tabBarIcon: ({ focused }) => (
+            <TabIcon
+              name={focused ? "clipboard" : "clipboard-outline"}
+              focused={focused}
+            />
+          ),
         }}
       />
       <Tabs.Screen
         name="settings"
         options={{
           title: "Settings",
-          tabBarIcon: ({ color }) => <TabIcon emoji="⚙️" color={color} />,
+          tabBarIcon: ({ focused }) => (
+            <TabIcon
+              name={focused ? "options" : "options-outline"}
+              focused={focused}
+            />
+          ),
         }}
       />
     </Tabs>
   );
 }
+
+const styles = StyleSheet.create({
+  pill: {
+    width: 56,
+    height: 30,
+    borderRadius: 15,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  pillActive: { backgroundColor: Colors.warningLight },
+});

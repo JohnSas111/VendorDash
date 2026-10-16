@@ -1,5 +1,6 @@
 import { ConfirmModal } from "@/components/ConfirmModal";
 import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { unregisterPush } from "@/lib/push";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
@@ -91,6 +92,7 @@ export default function SettingsScreen() {
   async function confirmLogout() {
     setLogoutConfirmVisible(false);
     setSigningOut(true);
+    await unregisterPush(); // before signOut: needs the login
     await supabase.auth.signOut();
     router.replace("/(auth)/login");
   }
