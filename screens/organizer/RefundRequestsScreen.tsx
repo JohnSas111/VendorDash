@@ -11,9 +11,11 @@
 // writes the audit log and notifies the vendor.
 
 import { ConfirmModal } from "@/components/ConfirmModal";
+import { Pagination } from "@/components/organizer/Pagination";
 import { PressableButton } from "@/components/PressableButton";
 import { Colors, Spacing, Typography } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
+import { usePaging } from "@/hooks/usePaging";
 import {
   BREAKPOINT,
   COLORS,
@@ -90,6 +92,8 @@ export default function RefundRequestsScreen() {
   const [approveFor, setApproveFor] = useState<RefundRow | null>(null);
   const [payoutAmount, setPayoutAmount] = useState("");
   const [idChecked, setIdChecked] = useState(false);
+
+  const paging = usePaging(rows, tab);
 
   const load = useCallback(async () => {
     if (!venue) return;
@@ -325,7 +329,7 @@ export default function RefundRequestsScreen() {
         </View>
       ) : (
         <View style={styles.list}>
-          {rows.map((r) => {
+          {paging.pageItems.map((r) => {
             const { bg, fg } = statusColors(
               r.status === "refunded" ? "paid" : r.status,
             );
@@ -380,6 +384,13 @@ export default function RefundRequestsScreen() {
           })}
         </View>
       )}
+
+      <Pagination
+        page={paging.page}
+        total={paging.total}
+        noun="refunds"
+        onPage={paging.setPage}
+      />
 
       {/* Detail modal: content depends on the request's status */}
       <Modal

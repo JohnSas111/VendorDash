@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "16304465106",
+    "project_id": "vendordash-93ade",
+    "storage_bucket": "vendordash-93ade.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:16304465106:android:64f982395dd5b04490f90b",
+        "android_client_info": {
+          "package_name": "com.vendordash.demo"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBuOvpYJhESTRP7R8QxjpqWyEmV6nFitt0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

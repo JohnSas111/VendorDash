@@ -1,19 +1,34 @@
 import { ConfirmModal } from "@/components/ConfirmModal";
+import { Pagination } from "@/components/organizer/Pagination";
+import { StatTile } from "@/components/organizer/StatTile";
 import { PressableButton } from "@/components/PressableButton";
 import { Colors, Spacing, Typography } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
+import { usePaging } from "@/hooks/usePaging";
 import {
   BREAKPOINT,
+  CARD_SHADOW,
   COLORS,
   formatDate,
   RADIUS,
+  SERIF,
   shared,
   statusColors,
 } from "@/lib/organizerTheme";
+import {
+  filterSessions,
+  isPastSession,
+  nextSession,
+  parseLocalDate,
+  SESSION_FILTERS,
+  sessionCounts,
+  startsInLabel,
+  type SessionFilter,
+} from "@/lib/sessionView";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Modal,
   ScrollView,
@@ -39,6 +54,13 @@ const NEXT_STATUS: Record<string, string | null> = {
   completed: null,
   cancelled: null,
 };
+
+// "Fri Oct 16" (the day name comes from the local date, no time-zone shift).
+function longDate(iso: string): string {
+  const d = parseLocalDate(iso);
+  if (!d) return formatDate(iso);
+  return `${d.toLocaleDateString(undefined, { weekday: "short" })} ${formatDate(iso)}`;
+}
 
 // Local-date-safe "YYYY-MM-DD" formatter.
 // Uses local year/month/day instead of UTC conversion.
@@ -78,6 +100,17 @@ export default function SessionScheduleScreen() {
 
   // Cancel confirmation
   const [pendingCancel, setPendingCancel] = useState<Session | null>(null);
+
+  // List filter, and the "+ New session" button jumps to the date box.
+  const [filter, setFilter] = useState<SessionFilter>("all");
+  const createInputRef = useRef<TextInput>(null);
+  const shown = useMemo(
+    () => filterSessions(sessions, filter),
+    [sessions, filter],
+  );
+  const paging = usePaging(shown, filter);
+  const counts = useMemo(() => sessionCounts(sessions), [sessions]);
+  const next = useMemo(() => nextSession(sessions), [sessions]);
 
   const load = useCallback(async () => {
     if (!venue) return;
@@ -399,38 +432,146 @@ export default function SessionScheduleScreen() {
         isDesktop && shared.contentDesktop,
       ]}
     >
-      <Text style={shared.title}>Sessions</Text>
+      <View style={styles.headerRow}>
+        <View style={{ flexShrink: 1 }}>
+          <Text style={shared.title}>Sessions</Text>
+          <Text style={shared.subtitle}>
+            One row per Friday to Sunday weekend run.
+          </Text>
+        </View>
+        <PressableButton
+          style={shared.primaryButton}
+          onPress={() => createInputRef.current?.focus()}
+        >
+          <Text style={shared.primaryButtonText}>+ New session</Text>
+        </PressableButton>
+      </View>
 
-      <Text style={shared.subtitle}>
-        One row per Friday–Sunday weekend run.
-      </Text>
+      {/* -------------------------------------------------- */}
+      {/* NEXT MARKET + COUNTS */}
+      {/* -------------------------------------------------- */}
+
+      <View style={styles.topRow}>
+        <View style={styles.hero}>
+          {next ? (
+            <>
+              <Text style={styles.heroKicker}>
+                {next.status === "open" ? "Open now" : "Next market"}
+              </Text>
+              <Text style={styles.heroDates}>
+                {longDate(next.friday_date)} – {longDate(next.sunday_date)}
+              </Text>
+              <View style={styles.heroMeta}>
+                <View
+                  style={[
+                    shared.badge,
+                    { backgroundColor: statusColors(next.status).bg },
+                  ]}
+                >
+                  <Text
+                    style={[
+                      shared.badgeText,
+                      { color: statusColors(next.status).fg },
+                    ]}
+                  >
+                    {next.status}
+                  </Text>
+                </View>
+                <Text style={styles.heroNote}>
+                  {startsInLabel(next.status, next.friday_date, new Date())}
+                </Text>
+              </View>
+              <View style={styles.heroActions}>
+                {NEXT_STATUS[next.status] && (
+                  <PressableButton
+                    style={styles.heroPrimary}
+                    onPress={() => advanceStatus(next)}
+                  >
+                    <Text style={styles.heroPrimaryText}>
+                      Mark {NEXT_STATUS[next.status]}
+                    </Text>
+                  </PressableButton>
+                )}
+                {next.status === "upcoming" && (
+                  <PressableButton
+                    style={styles.heroSecondary}
+                    onPress={() => openEdit(next)}
+                  >
+                    <Text style={styles.heroSecondaryText}>Edit</Text>
+                  </PressableButton>
+                )}
+              </View>
+            </>
+          ) : (
+            <>
+              <Text style={styles.heroKicker}>Next market</Text>
+              <Text style={styles.heroDates}>Nothing scheduled</Text>
+              <Text style={styles.heroNote}>
+                Create the next Friday below and vendors can start booking.
+              </Text>
+            </>
+          )}
+        </View>
+
+        <View style={styles.tiles}>
+          <View style={styles.tileRow}>
+            <StatTile
+              label="Upcoming"
+              value={counts.upcoming}
+              tone={counts.upcoming > 0 ? "amber" : "white"}
+              note="not open yet"
+            />
+            <StatTile
+              label="Open"
+              value={counts.open}
+              tone={counts.open > 0 ? "green" : "white"}
+              note="taking bookings"
+            />
+          </View>
+          <View style={styles.tileRow}>
+            <StatTile
+              label="Completed"
+              value={counts.completed}
+              note="finished runs"
+            />
+            <StatTile
+              label="Cancelled"
+              value={counts.cancelled}
+              note="called off"
+            />
+          </View>
+        </View>
+      </View>
 
       {/* -------------------------------------------------- */}
       {/* CREATE SESSION */}
       {/* -------------------------------------------------- */}
 
-      <View style={shared.card}>
-        <Text style={shared.label}>Friday date (YYYY-MM-DD)</Text>
-
-        <TextInput
-          accessibilityLabel="Friday date (YYYY-MM-DD)"
-          style={shared.input}
-          value={fridayInput}
-          onChangeText={setFridayInput}
-          placeholder="2026-09-18"
-          autoCapitalize="none"
-          autoCorrect={false}
-        />
-
-        <PressableButton
-          style={[shared.primaryButton, styles.createButton]}
-          onPress={createSession}
-          disabled={creating}
-        >
-          <Text style={shared.primaryButtonText}>
-            {creating ? "Creating…" : "Create session"}
-          </Text>
-        </PressableButton>
+      <View style={[shared.card, styles.createCard]}>
+        <Text style={styles.createLabel}>
+          Create a session: pick the Friday (YYYY-MM-DD)
+        </Text>
+        <View style={styles.createRow}>
+          <TextInput
+            ref={createInputRef}
+            accessibilityLabel="Friday date (YYYY-MM-DD)"
+            style={[shared.input, styles.createInput]}
+            value={fridayInput}
+            onChangeText={setFridayInput}
+            placeholder="2026-09-18"
+            autoCapitalize="none"
+            autoCorrect={false}
+          />
+          <PressableButton
+            style={[shared.primaryButton, styles.createButton]}
+            onPress={createSession}
+            disabled={creating}
+          >
+            <Text style={shared.primaryButtonText}>
+              {creating ? "Creating…" : "Create session"}
+            </Text>
+          </PressableButton>
+        </View>
       </View>
 
       {/* -------------------------------------------------- */}
@@ -448,35 +589,65 @@ export default function SessionScheduleScreen() {
       {/* SESSION LIST */}
       {/* -------------------------------------------------- */}
 
-      <Text style={shared.sectionHeading}>All sessions</Text>
-
-      <View style={styles.list}>
-        {sessions.length === 0 ? (
-          <View style={shared.emptyState}>
-            <Ionicons name="calendar-outline" size={26} color={COLORS.slate} />
-            <Text style={[shared.emptyStateText, { marginTop: Spacing.xs }]}>
-              No market sessions yet.
+      <View style={styles.filterRow}>
+        {SESSION_FILTERS.map((f) => (
+          <PressableButton
+            key={f}
+            onPress={() => setFilter(f)}
+            style={[shared.chip, filter === f && shared.chipActive]}
+          >
+            <Text
+              style={[shared.chipText, filter === f && shared.chipTextActive]}
+            >
+              {f === "all" ? "All" : f.charAt(0).toUpperCase() + f.slice(1)}
             </Text>
-          </View>
-        ) : (
-          sessions.map((s) => {
+          </PressableButton>
+        ))}
+      </View>
+
+      {shown.length === 0 ? (
+        <View style={shared.emptyState}>
+          <Ionicons name="calendar-outline" size={26} color={COLORS.slate} />
+          <Text style={[shared.emptyStateText, { marginTop: Spacing.xs }]}>
+            {sessions.length === 0
+              ? "No market sessions yet."
+              : "No sessions match this filter."}
+          </Text>
+        </View>
+      ) : (
+        <View style={styles.listCard}>
+          {paging.pageItems.map((s, idx) => {
             const { bg, fg } = statusColors(s.status);
-
-            const next = NEXT_STATUS[s.status];
-
+            const nextStatus = NEXT_STATUS[s.status];
             const canEdit = s.status === "upcoming";
-
+            const d = parseLocalDate(s.friday_date);
             return (
               <View
                 key={s.id}
-                style={[shared.row, isDesktop && shared.rowDesktop]}
+                style={[
+                  styles.sessionRow,
+                  isDesktop && styles.sessionRowDesktop,
+                  idx > 0 && styles.sessionRowDivider,
+                  isPastSession(s.status) && styles.sessionRowPast,
+                ]}
               >
+                {/* DATE BADGE */}
+                <View style={styles.dateBadge}>
+                  <Text style={styles.dateMonth}>
+                    {d
+                      ? d
+                          .toLocaleDateString(undefined, { month: "short" })
+                          .toUpperCase()
+                      : ""}
+                  </Text>
+                  <Text style={styles.dateDay}>{d ? d.getDate() : ""}</Text>
+                </View>
+
                 {/* SESSION INFO */}
                 <View style={{ flex: 1 }}>
                   <Text style={shared.rowTitle}>
-                    {formatDate(s.friday_date)} – {formatDate(s.sunday_date)}
+                    {longDate(s.friday_date)} – {longDate(s.sunday_date)}
                   </Text>
-
                   <View
                     style={[
                       shared.badge,
@@ -511,7 +682,7 @@ export default function SessionScheduleScreen() {
                     </PressableButton>
                   )}
 
-                  {next && (
+                  {nextStatus && (
                     <PressableButton
                       style={[shared.successButton, styles.actionButton]}
                       onPress={() => advanceStatus(s)}
@@ -519,9 +690,11 @@ export default function SessionScheduleScreen() {
                       <Ionicons
                         name="arrow-forward-circle"
                         size={14}
-                        color={COLORS.white}
+                        color={COLORS.inkNavy}
                       />
-                      <Text style={shared.successButtonText}>Mark {next}</Text>
+                      <Text style={shared.successButtonText}>
+                        Mark {nextStatus}
+                      </Text>
                     </PressableButton>
                   )}
 
@@ -541,9 +714,16 @@ export default function SessionScheduleScreen() {
                 </View>
               </View>
             );
-          })
-        )}
-      </View>
+          })}
+        </View>
+      )}
+
+      <Pagination
+        page={paging.page}
+        total={paging.total}
+        noun="sessions"
+        onPage={paging.setPage}
+      />
 
       {/* -------------------------------------------------- */}
       {/* EDIT SESSION MODAL */}
@@ -649,9 +829,93 @@ function SessionsSkeleton() {
 }
 
 const styles = StyleSheet.create({
-  createButton: { marginTop: Spacing.md, alignSelf: "flex-start" },
+  headerRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    alignItems: "flex-start",
+    justifyContent: "space-between",
+    gap: Spacing.md,
+  },
+  topRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: Spacing.lg,
+    marginBottom: Spacing.xl,
+  },
+  hero: {
+    flexGrow: 2,
+    flexBasis: 320,
+    backgroundColor: COLORS.dark,
+    borderRadius: RADIUS.lg + 2,
+    padding: Spacing.xxl,
+    gap: Spacing.md,
+    justifyContent: "center",
+  },
+  heroKicker: { fontSize: 13, color: COLORS.onDark },
+  heroDates: { fontFamily: SERIF, fontSize: 30, color: COLORS.white },
+  heroMeta: { flexDirection: "row", alignItems: "center", gap: Spacing.md },
+  heroNote: { fontSize: 13, color: COLORS.onDark },
+  heroActions: { flexDirection: "row", gap: Spacing.sm, marginTop: Spacing.sm },
+  heroPrimary: {
+    backgroundColor: COLORS.amber,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: Spacing.xl,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroPrimaryText: { color: COLORS.inkNavy, fontWeight: "700", fontSize: 14 },
+  heroSecondary: {
+    backgroundColor: "#262626",
+    borderWidth: 1,
+    borderColor: "#3A3A3A",
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: Spacing.xl,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  heroSecondaryText: { color: COLORS.white, fontWeight: "700", fontSize: 14 },
+  tiles: { flexGrow: 1, flexBasis: 300, gap: Spacing.lg },
+  tileRow: { flexDirection: "row", gap: Spacing.lg },
+  createCard: { marginBottom: Spacing.xl, gap: Spacing.sm },
+  createLabel: { fontSize: 13, fontWeight: "600", color: COLORS.slate },
+  createRow: { flexDirection: "row", flexWrap: "wrap", gap: Spacing.md },
+  createInput: { flexGrow: 1, flexBasis: 220 },
+  createButton: { alignSelf: "flex-start" },
+  filterRow: {
+    flexDirection: "row",
+    flexWrap: "wrap",
+    gap: 10,
+    marginBottom: Spacing.xl,
+  },
+  listCard: {
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    ...CARD_SHADOW,
+  },
+  sessionRow: { padding: Spacing.lg, gap: Spacing.md },
+  sessionRowDesktop: { flexDirection: "row", alignItems: "center" },
+  sessionRowDivider: { borderTopWidth: 1, borderTopColor: COLORS.hairline },
+  // Finished and cancelled runs are drawn quieter than the live ones.
+  sessionRowPast: { opacity: 0.7 },
+  dateBadge: {
+    width: 52,
+    height: 52,
+    borderRadius: 14,
+    backgroundColor: COLORS.tintAmber,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  dateMonth: {
+    fontSize: 10,
+    fontWeight: "700",
+    letterSpacing: 0.5,
+    color: COLORS.amberText,
+  },
+  dateDay: { fontFamily: SERIF, fontSize: 20, color: COLORS.inkNavy },
   recurringBanner: {
-    marginTop: Spacing.md,
+    marginBottom: Spacing.xl,
     borderColor: COLORS.amber,
     backgroundColor: Colors.warningLight,
     flexDirection: "row",

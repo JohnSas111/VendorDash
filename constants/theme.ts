@@ -5,12 +5,12 @@
 // once here if you ever want to rebrand.
 
 export const Colors = {
-  background: "#F5F5F5",
+  background: "#FAF5EC",
   white: "#FFFFFF",
   text: "#1A1A1A",
   textMuted: "#6B6B6B",
-  border: "#D9D9D9",
-  borderLight: "#E0E0E0",
+  border: "#EADFCB",
+  borderLight: "#F0E7D6",
 
   // Status / stall colors — used consistently across Floor Map, badges, etc.
   available: "#2DAA6E",

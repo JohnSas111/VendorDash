@@ -1,6 +1,9 @@
+import { Pagination } from "@/components/organizer/Pagination";
+import { StatTile } from "@/components/organizer/StatTile";
 import { PressableButton } from "@/components/PressableButton";
 import { Colors, Spacing, Typography } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
+import { usePaging } from "@/hooks/usePaging";
 import {
   BREAKPOINT,
   COLORS,
@@ -401,6 +404,15 @@ export default function CheckInScreen() {
     }
   };
 
+  const filtered = rows.filter(
+    (r) =>
+      !search.trim() ||
+      r.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
+      r.owner_name.toLowerCase().includes(search.toLowerCase()) ||
+      r.stall_number.toLowerCase().includes(search.toLowerCase()),
+  );
+  const paging = usePaging(filtered, search);
+
   if (venueLoading) {
     return (
       <ScrollView
@@ -422,13 +434,6 @@ export default function CheckInScreen() {
     );
   }
 
-  const filtered = rows.filter(
-    (r) =>
-      !search.trim() ||
-      r.vendor_name.toLowerCase().includes(search.toLowerCase()) ||
-      r.owner_name.toLowerCase().includes(search.toLowerCase()) ||
-      r.stall_number.toLowerCase().includes(search.toLowerCase()),
-  );
   const checkedInCount = rows.filter(
     (r) => r.status === "checked_in" || r.status === "completed",
   ).length;
@@ -507,13 +512,10 @@ export default function CheckInScreen() {
               <PressableButton
                 key={x.id}
                 onPress={() => setPickedSessionId(x.id)}
-                style={[shared.secondaryButton, active && styles.chipActive]}
+                style={[shared.chip, active && shared.chipActive]}
               >
                 <Text
-                  style={[
-                    shared.secondaryButtonText,
-                    active && styles.chipActiveText,
-                  ]}
+                  style={[shared.chipText, active && shared.chipTextActive]}
                 >
                   {formatDate(x.friday_date)} · {x.status}
                 </Text>
@@ -524,22 +526,9 @@ export default function CheckInScreen() {
       )}
 
       <View style={styles.statRow}>
-        <View style={[shared.card, styles.statCard]}>
-          <Text style={styles.statValue}>{rows.length}</Text>
-          <Text style={styles.statLabel}>Expected</Text>
-        </View>
-        <View style={[shared.card, styles.statCard]}>
-          <Text style={[styles.statValue, { color: COLORS.tealText }]}>
-            {checkedInCount}
-          </Text>
-          <Text style={styles.statLabel}>Checked in</Text>
-        </View>
-        <View style={[shared.card, styles.statCard]}>
-          <Text style={[styles.statValue, { color: COLORS.amberText }]}>
-            {waitingCount}
-          </Text>
-          <Text style={styles.statLabel}>Not in yet</Text>
-        </View>
+        <StatTile label="Expected" value={rows.length} tone="dark" />
+        <StatTile label="Checked in" value={checkedInCount} tone="green" />
+        <StatTile label="Not in yet" value={waitingCount} tone="amber" />
       </View>
 
       {readyCount > 0 && (
@@ -668,7 +657,7 @@ export default function CheckInScreen() {
             </View>
           ) : (
             <View style={styles.list}>
-              {filtered.map((r) => {
+              {paging.pageItems.map((r) => {
                 const { bg, fg } = statusColors(r.status);
                 return (
                   <View key={r.id} style={[shared.row, shared.rowDesktop]}>
@@ -749,6 +738,12 @@ export default function CheckInScreen() {
               })}
             </View>
           )}
+          <Pagination
+            page={paging.page}
+            total={paging.total}
+            noun="vendors"
+            onPage={paging.setPage}
+          />
         </>
       )}
       <Modal
@@ -858,12 +853,6 @@ const styles = StyleSheet.create({
     marginBottom: Spacing.lg,
   },
   statCard: { flex: 1 },
-  statValue: {
-    fontSize: Typography.xxl - 2,
-    fontWeight: "700",
-    color: COLORS.inkNavy,
-  },
-  statLabel: { fontSize: Typography.sm, color: COLORS.slate },
   scanFeedbackCard: {
     marginBottom: Spacing.md,
     flexDirection: "row",
@@ -913,8 +902,6 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     marginTop: Spacing.md,
   },
-  chipActive: { backgroundColor: COLORS.inkNavy },
-  chipActiveText: { color: COLORS.white },
   readyCard: {
     flexDirection: "row",
     flexWrap: "wrap",

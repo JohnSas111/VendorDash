@@ -1,6 +1,9 @@
+import { Pagination } from "@/components/organizer/Pagination";
+import { StatTile } from "@/components/organizer/StatTile";
 import { PressableButton } from "@/components/PressableButton";
 import { Spacing, Typography } from "@/constants/theme";
 import { useOrganizerVenue } from "@/hooks/useOrganizerVenue";
+import { usePaging } from "@/hooks/usePaging";
 import {
   BREAKPOINT,
   COLORS,
@@ -123,6 +126,8 @@ export default function SalesReportsScreen() {
     })();
   }, [selectedSessionId, showToast]);
 
+  const paging = usePaging(vendorRows, String(selectedSessionId));
+
   if (venueLoading) {
     return (
       <ScrollView
@@ -186,15 +191,14 @@ export default function SalesReportsScreen() {
                   key={s.id}
                   onPress={() => setSelectedSessionId(s.id)}
                   style={[
-                    shared.secondaryButton,
-                    selectedSessionId === s.id && styles.sessionChipActive,
+                    shared.chip,
+                    selectedSessionId === s.id && shared.chipActive,
                   ]}
                 >
                   <Text
                     style={[
-                      shared.secondaryButtonText,
-                      selectedSessionId === s.id &&
-                        styles.sessionChipActiveText,
+                      shared.chipText,
+                      selectedSessionId === s.id && shared.chipTextActive,
                     ]}
                   >
                     {formatDate(s.friday_date)}
@@ -209,20 +213,13 @@ export default function SalesReportsScreen() {
           ) : (
             <>
               <View style={styles.statRow}>
-                <View style={[shared.card, styles.statCard]}>
-                  <Text style={styles.statValue}>
-                    {formatMoney(totalSales)}
-                  </Text>
-                  <Text style={styles.statLabel}>Total gross sales</Text>
-                </View>
-                <View style={[shared.card, styles.statCard]}>
-                  <Text style={styles.statValue}>{totalItems}</Text>
-                  <Text style={styles.statLabel}>Items sold</Text>
-                </View>
-                <View style={[shared.card, styles.statCard]}>
-                  <Text style={styles.statValue}>{vendorRows.length}</Text>
-                  <Text style={styles.statLabel}>Vendors reporting</Text>
-                </View>
+                <StatTile
+                  label="Total gross sales"
+                  value={formatMoney(totalSales)}
+                  tone="green"
+                />
+                <StatTile label="Items sold" value={totalItems} />
+                <StatTile label="Vendors reporting" value={vendorRows.length} />
               </View>
 
               {vendorRows.length === 0 ? (
@@ -240,7 +237,7 @@ export default function SalesReportsScreen() {
                 </View>
               ) : (
                 <View style={styles.list}>
-                  {vendorRows.map((r, i) => (
+                  {paging.pageItems.map((r, i) => (
                     <View key={i} style={[shared.row, shared.rowDesktop]}>
                       <View>
                         <Text style={shared.rowTitle}>{r.vendor_name}</Text>
@@ -290,6 +287,12 @@ export default function SalesReportsScreen() {
                   ))}
                 </View>
               )}
+              <Pagination
+                page={paging.page}
+                total={paging.total}
+                noun="vendors"
+                onPage={paging.setPage}
+              />
             </>
           )}
         </>
@@ -356,16 +359,8 @@ const styles = StyleSheet.create({
   emptyStateSpacing: { marginTop: Spacing.lg },
   sessionPicker: { marginBottom: Spacing.lg },
   sessionPickerRow: { flexDirection: "row", gap: Spacing.sm },
-  sessionChipActive: { backgroundColor: COLORS.inkNavy },
-  sessionChipActiveText: { color: COLORS.white },
   statRow: { flexDirection: "row", gap: Spacing.md, marginBottom: Spacing.xl },
   statCard: { flex: 1 },
-  statValue: {
-    fontSize: Typography.xxl - 2,
-    fontWeight: "700",
-    color: COLORS.inkNavy,
-  },
-  statLabel: { fontSize: Typography.sm, color: COLORS.slate },
   list: { gap: Spacing.sm },
   salesCol: { alignItems: "flex-end" },
   skeletonBlock: {

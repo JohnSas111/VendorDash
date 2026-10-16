@@ -1,5 +1,7 @@
+import { Pagination } from "@/components/organizer/Pagination";
 import { PressableButton } from "@/components/PressableButton";
 import { Spacing, Typography } from "@/constants/theme";
+import { usePaging } from "@/hooks/usePaging";
 import { BREAKPOINT, COLORS, shared, statusColors } from "@/lib/organizerTheme";
 import { openSignedImage } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
@@ -106,6 +108,8 @@ export default function VendorVerificationScreen() {
     }
   };
 
+  const paging = usePaging(rows, filter);
+
   return (
     <ScrollView
       style={shared.screen}
@@ -160,7 +164,7 @@ export default function VendorVerificationScreen() {
         </View>
       ) : (
         <View style={styles.list}>
-          {rows.map((v) => {
+          {paging.pageItems.map((v) => {
             const { bg, fg } = statusColors(
               v.is_verified ? "verified" : "unverified",
             );
@@ -233,6 +237,12 @@ export default function VendorVerificationScreen() {
           })}
         </View>
       )}
+      <Pagination
+        page={paging.page}
+        total={paging.total}
+        noun="vendors"
+        onPage={paging.setPage}
+      />
     </ScrollView>
   );
 }

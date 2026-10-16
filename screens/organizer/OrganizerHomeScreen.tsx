@@ -1,11 +1,13 @@
 import { PressableButton } from "@/components/PressableButton";
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { Radius, Spacing, Typography } from "@/constants/theme";
 import {
   BREAKPOINT,
+  CARD_SHADOW,
   COLORS,
   formatDate,
   RADIUS,
+  SERIF,
   shared,
   statusColors,
 } from "@/lib/organizerTheme";
@@ -39,6 +41,8 @@ type PendingBooking = {
   owner_name: string;
   stall_number: string;
 };
+
+type Tone = "dark" | "amber" | "red" | "white";
 
 type DashboardData = {
   venueName: string;
@@ -241,24 +245,38 @@ export default function OrganizerHomeScreen() {
 
   if (!data) return null;
 
-  const stats = [
-    { label: "Active stalls", value: String(data.activeStallCount) },
+  // Each tile has a colour: dark for the plain count, amber when approvals or
+  // verifications are waiting, soft red when a refund is waiting, white when
+  // there is nothing to do.
+  const stats: { label: string; value: string; tone: Tone }[] = [
+    {
+      label: "Active stalls",
+      value: String(data.activeStallCount),
+      tone: "dark",
+    },
     {
       label: "Pending approvals",
       value: String(data.pendingBookingCount),
-      highlight: data.pendingBookingCount > 0,
+      tone: data.pendingBookingCount > 0 ? "amber" : "white",
     },
     {
       label: "Pending verifications",
       value: String(data.pendingVerificationCount),
-      highlight: data.pendingVerificationCount > 0,
+      tone: data.pendingVerificationCount > 0 ? "amber" : "white",
     },
     {
       label: "Refund requests",
       value: String(data.refundRequestCount),
-      highlight: data.refundRequestCount > 0,
+      tone: data.refundRequestCount > 0 ? "red" : "white",
     },
   ];
+
+  const nothingWaiting =
+    data.pendingBookings.length === 0 &&
+    data.pendingVerificationCount === 0 &&
+    data.refundRequestCount === 0;
+  const plural = (n: number, one: string, many: string) =>
+    `${n} ${n === 1 ? one : many}`;
 
   const sessionBadge = data.currentSession
     ? statusColors(data.currentSession.status)
@@ -319,86 +337,152 @@ export default function OrganizerHomeScreen() {
             style={[
               styles.statCard,
               isDesktop && styles.statCardDesktop,
-              s.highlight && styles.statCardHighlight,
+              TONE_BG[s.tone],
             ]}
           >
-            <Text
-              style={[
-                styles.statValue,
-                s.highlight && { color: COLORS.amberText },
-              ]}
-            >
+            <Text style={[styles.statLabel, { color: TONE_MUTED[s.tone] }]}>
+              {s.label}
+            </Text>
+            <Text style={[styles.statValue, { color: TONE_TEXT[s.tone] }]}>
               {s.value}
             </Text>
-            <Text style={styles.statLabel}>{s.label}</Text>
           </Pressable>
         ))}
       </View>
 
-      <Text style={shared.sectionHeading}>Needs attention</Text>
+      <View style={styles.waitCard}>
+        <Text style={styles.waitTitle}>Waiting for you</Text>
 
-      {data.pendingBookings.length === 0 ? (
-        <View style={styles.emptyState}>
-          <Ionicons
-            name="checkmark-done-circle-outline"
-            size={28}
-            color={COLORS.slate}
-            style={{ marginBottom: Spacing.xs }}
-          />
-          <Text style={styles.emptyStateText}>
-            No pending booking requests.
-          </Text>
-        </View>
-      ) : (
-        <View style={styles.list}>
-          {data.pendingBookings.map((b) => (
-            <View
-              key={b.id}
-              style={[styles.row, isDesktop && styles.rowDesktop]}
-            >
-              <View style={styles.rowInfo}>
-                <Text style={styles.rowTitle}>{b.vendor_name}</Text>
-                <Text style={styles.rowSubtitle}>
-                  {ownerPrefix(b.vendor_name, b.owner_name)}Stall{" "}
-                  {b.stall_number} · requested {formatDate(b.requested_at)}
-                </Text>
-              </View>
-              <View style={styles.rowActions}>
-                <PressableButton
-                  style={[styles.actionButton, styles.rejectButton]}
-                  disabled={actingOnId === b.id}
-                  onPress={() => handleReject(b.id)}
-                >
-                  <Ionicons name="close" size={14} color={COLORS.clay} />
-                  <Text style={styles.rejectButtonText}>Reject</Text>
-                </PressableButton>
-                <PressableButton
-                  style={[styles.actionButton, styles.approveButton]}
-                  disabled={actingOnId === b.id}
-                  onPress={() => handleApprove(b.id)}
-                >
-                  <Ionicons name="checkmark" size={14} color={COLORS.white} />
-                  <Text style={styles.approveButtonText}>Approve</Text>
-                </PressableButton>
-              </View>
+        {nothingWaiting && (
+          <View style={styles.emptyState}>
+            <Ionicons
+              name="checkmark-done-circle-outline"
+              size={28}
+              color={COLORS.slate}
+              style={{ marginBottom: Spacing.xs }}
+            />
+            <Text style={styles.emptyStateText}>
+              Nothing is waiting for you right now.
+            </Text>
+          </View>
+        )}
+
+        {data.pendingVerificationCount > 0 && (
+          <View style={[styles.waitRow, { backgroundColor: COLORS.tintAmber }]}>
+            <View style={styles.waitIcon}>
+              <Ionicons
+                name="shield-checkmark-outline"
+                size={20}
+                color={COLORS.amberText}
+              />
             </View>
-          ))}
-        </View>
-      )}
+            <View style={styles.rowInfo}>
+              <Text style={styles.rowTitle}>Vendor verification</Text>
+              <Text style={styles.rowSubtitle}>
+                {plural(
+                  data.pendingVerificationCount,
+                  "vendor is",
+                  "vendors are",
+                )}{" "}
+                not verified yet.
+              </Text>
+            </View>
+            <PressableButton
+              style={styles.darkButton}
+              onPress={() => router.push("/vendor-verification" as any)}
+            >
+              <Text style={styles.darkButtonText}>Review</Text>
+            </PressableButton>
+          </View>
+        )}
 
-      {data.pendingBookingCount > data.pendingBookings.length && (
-        <Pressable
-          accessibilityRole="link"
-          style={styles.moreLinkRow}
-          onPress={() => router.push("/booking-requests" as any)}
-        >
-          <Text style={styles.moreLink}>
-            + {data.pendingBookingCount - data.pendingBookings.length} more on
-            Booking Requests
-          </Text>
-          <Ionicons name="chevron-forward" size={14} color={COLORS.inkNavy} />
-        </Pressable>
-      )}
+        {data.refundRequestCount > 0 && (
+          <View style={[styles.waitRow, { backgroundColor: COLORS.tintRed }]}>
+            <View style={styles.waitIcon}>
+              <Ionicons
+                name="arrow-undo-outline"
+                size={20}
+                color={COLORS.clayText}
+              />
+            </View>
+            <View style={styles.rowInfo}>
+              <Text style={styles.rowTitle}>Refund requests</Text>
+              <Text style={styles.rowSubtitle}>
+                {plural(
+                  data.refundRequestCount,
+                  "vendor asked",
+                  "vendors asked",
+                )}{" "}
+                for a refund.
+              </Text>
+            </View>
+            <PressableButton
+              style={styles.darkButton}
+              onPress={() => router.push("/refund-requests" as any)}
+            >
+              <Text style={styles.darkButtonText}>Open</Text>
+            </PressableButton>
+          </View>
+        )}
+
+        {data.pendingBookings.map((b) => (
+          <View
+            key={b.id}
+            style={[
+              styles.waitRow,
+              styles.waitRowWrap,
+              { backgroundColor: COLORS.rowSelected },
+            ]}
+          >
+            <View style={styles.waitIcon}>
+              <Ionicons
+                name="clipboard-outline"
+                size={20}
+                color={COLORS.inkNavy}
+              />
+            </View>
+            <View style={styles.rowInfo}>
+              <Text style={styles.rowTitle}>{b.vendor_name}</Text>
+              <Text style={styles.rowSubtitle}>
+                {ownerPrefix(b.vendor_name, b.owner_name)}Stall {b.stall_number}{" "}
+                · requested {formatDate(b.requested_at)}
+              </Text>
+            </View>
+            <View style={styles.rowActions}>
+              <PressableButton
+                style={[styles.actionButton, styles.rejectButton]}
+                disabled={actingOnId === b.id}
+                onPress={() => handleReject(b.id)}
+              >
+                <Ionicons name="close" size={14} color={COLORS.clay} />
+                <Text style={styles.rejectButtonText}>Reject</Text>
+              </PressableButton>
+              <PressableButton
+                style={[styles.actionButton, styles.approveButton]}
+                disabled={actingOnId === b.id}
+                onPress={() => handleApprove(b.id)}
+              >
+                <Ionicons name="checkmark" size={14} color={COLORS.inkNavy} />
+                <Text style={styles.approveButtonText}>Approve</Text>
+              </PressableButton>
+            </View>
+          </View>
+        ))}
+
+        {data.pendingBookingCount > data.pendingBookings.length && (
+          <Pressable
+            accessibilityRole="link"
+            style={styles.moreLinkRow}
+            onPress={() => router.push("/booking-requests" as any)}
+          >
+            <Text style={styles.moreLink}>
+              + {data.pendingBookingCount - data.pendingBookings.length} more in
+              Bookings
+            </Text>
+            <Ionicons name="chevron-forward" size={14} color={COLORS.inkNavy} />
+          </Pressable>
+        )}
+      </View>
     </ScrollView>
   );
 }
@@ -440,12 +524,32 @@ function DashboardSkeleton({ isDesktop }: { isDesktop: boolean }) {
   );
 }
 
+const TONE_BG = {
+  dark: { backgroundColor: COLORS.dark },
+  amber: { backgroundColor: COLORS.amber },
+  red: { backgroundColor: COLORS.tintRed },
+  white: { backgroundColor: COLORS.white, ...CARD_SHADOW },
+} as const;
+// Text colours that keep 4.5:1 or better on each tile colour.
+const TONE_TEXT = {
+  dark: COLORS.white,
+  amber: COLORS.inkNavy,
+  red: COLORS.clayText,
+  white: COLORS.inkNavy,
+} as const;
+const TONE_MUTED = {
+  dark: COLORS.onDark,
+  amber: COLORS.inkNavy,
+  red: COLORS.clayText,
+  white: COLORS.slate,
+} as const;
+
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.paper },
   content: { padding: Spacing.xl, paddingBottom: Spacing.xxxl + Spacing.lg },
   contentDesktop: {
     padding: Spacing.xxxl + Spacing.lg,
-    maxWidth: 960,
+    maxWidth: 1080,
     alignSelf: "center",
     width: "100%",
   },
@@ -457,8 +561,8 @@ const styles = StyleSheet.create({
     padding: Spacing.xxl,
   },
   title: {
-    fontFamily: "serif",
-    fontSize: Typography.xxxl - 4,
+    fontFamily: SERIF,
+    fontSize: 34,
     color: COLORS.inkNavy,
     marginBottom: Spacing.xs,
   },
@@ -490,15 +594,19 @@ const styles = StyleSheet.create({
   },
   quickActionButton: { flex: 1 },
 
-  statGrid: { marginTop: Spacing.xl, gap: Spacing.md },
+  statGrid: {
+    marginTop: Spacing.xl,
+    gap: Spacing.md,
+    flexDirection: "row",
+    flexWrap: "wrap",
+  },
   statGridDesktop: { flexDirection: "row" },
   statCard: {
-    backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: Spacing.lg,
-    ...Shadow.sm,
+    flexGrow: 1,
+    flexBasis: 140,
+    borderRadius: 20,
+    padding: 18,
+    gap: 6,
   },
   skeletonCard: {
     backgroundColor: COLORS.border,
@@ -511,42 +619,62 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.border,
   },
   statCardDesktop: { flex: 1 },
-  statCardHighlight: { borderColor: COLORS.amber },
-  statValue: {
-    fontSize: Typography.xxl + 2,
-    fontWeight: "700",
-    color: COLORS.inkNavy,
-    marginBottom: 2,
+  statValue: { fontFamily: SERIF, fontSize: 34, lineHeight: 38 },
+  statLabel: { fontSize: Typography.base, fontWeight: "600" },
+
+  waitCard: {
+    marginTop: Spacing.xxl,
+    backgroundColor: COLORS.white,
+    borderRadius: RADIUS.lg,
+    padding: Spacing.xl,
+    gap: Spacing.md,
+    ...CARD_SHADOW,
   },
-  statLabel: { fontSize: Typography.base, color: COLORS.slate },
+  waitTitle: {
+    fontFamily: SERIF,
+    fontSize: 21,
+    color: COLORS.inkNavy,
+  },
+  waitRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: Spacing.md,
+    borderRadius: RADIUS.md,
+    padding: Spacing.md,
+  },
+  waitRowWrap: { flexWrap: "wrap" },
+  waitIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: COLORS.white,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  darkButton: {
+    backgroundColor: COLORS.dark,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: Spacing.xl,
+    minHeight: 44,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  darkButtonText: { color: COLORS.white, fontWeight: "700", fontSize: 14 },
 
   emptyState: {
-    backgroundColor: COLORS.white,
     borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
     padding: Spacing.xl,
     alignItems: "center",
-    ...Shadow.sm,
   },
   emptyStateText: { color: COLORS.slate, fontSize: Typography.md },
 
-  list: { gap: Spacing.sm },
   row: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.border,
     padding: Spacing.md,
     gap: Spacing.sm,
-    ...Shadow.sm,
   },
-  rowDesktop: {
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  rowInfo: { flex: 1 },
+  rowInfo: { flex: 1, minWidth: 160 },
   rowTitle: {
     fontSize: Typography.md,
     fontWeight: "600",
@@ -565,7 +693,7 @@ const styles = StyleSheet.create({
     gap: Spacing.xs,
   },
   rejectButton: {
-    backgroundColor: COLORS.paper,
+    backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.clay,
   },

@@ -141,7 +141,10 @@ select pg_temp.t('W13','READ: organizer sees own venue bookings','aaaaaaaa-0000-
 \echo ===== PERMIT CHANGE still resets verification (trigger survives) =====
 select pg_temp.t('W14','vendor changes permit -> verification reset','aaaaaaaa-0000-0000-0000-000000000001','authenticated',$q$update public.vendor_details set business_permit_url='aaaaaaaa-0000-0000-0000-000000000001/permit2.jpg' where id='aaaaaaaa-0000-0000-0000-000000000001'$q$,'rows');
 select case when (select is_verified from public.vendor_details where id='aaaaaaaa-0000-0000-0000-000000000001')=false then 'PASS' else 'FAIL' end||' | W14b verification was reset by the trigger after the permit change';
+-- setup: only an organizer may change is_verified (trigger), so act as the organizer, then clear the claims again
+select set_config('request.jwt.claims','{"sub":"aaaaaaaa-0000-0000-0000-000000000009","role":"authenticated"}',true);
 update public.vendor_details set is_verified=true where id='aaaaaaaa-0000-0000-0000-000000000001';
+select set_config('request.jwt.claims','{}',true);
 
 \echo
 \echo ===== FULL FLOW through the real functions as app roles =====
@@ -165,11 +168,16 @@ begin
   r := pg_temp.scalar(o1,'authenticated', format($s$select public.check_in_booking(%L::uuid)::text$s$, b1));
   select status into st from public.bookings where id = b1::uuid;
   raise notice '% | F05 organizer check_in_booking -> %  [%]', case when st='checked_in' then 'PASS' else 'FAIL' end, st, left(coalesce(r,''),80);
-  r := pg_temp.scalar(o1,'authenticated', format($s$select public.complete_booking(%L::uuid,true,'ok')::text$s$, b1));
+  r := pg_temp.scalar(o1,'authenticated', format($s$select public.complete_booking(%L::uuid,true,'early completion test')::text$s$, b1));
   select status into st from public.bookings where id = b1::uuid;
   raise notice '% | F06 organizer complete_booking -> %  [%]', case when st='completed' then 'PASS' else 'FAIL' end, st, left(coalesce(r,''),80);
   r := pg_temp.scalar(v1,'authenticated', format($s$select public.submit_sales(%L::uuid,12345,5,'note',null)::text$s$, b1));
   raise notice '% | F07 vendor submit_sales on completed booking [%]', case when r like 'ERR%' or r is null then 'FAIL' else 'PASS' end, left(coalesce(r,'null'),80);
+  -- booking rules: an unverified vendor may have only 1 open request, and must have uploaded a permit.
+  -- Vendor Two already has 2 open seed bookings, so close them first (as the system, no vendor claims).
+  perform set_config('request.jwt.claims','{}',true);
+  update public.bookings set status='cancelled' where vendor_id=v2 and status in ('pending','approved');
+  update public.vendor_details set business_permit_url='aaaaaaaa-0000-0000-0000-000000000002/permit.jpg' where id=v2;
   b2 := pg_temp.scalar(v2,'authenticated',$s$select public.create_booking('cccccccc-0000-0000-0000-000000000004','dddddddd-0000-0000-0000-0000000000a5',array['friday'],false)::text$s$);
   raise notice '% | F08 unverified vendor create_booking [%]', case when b2 like 'ERR%' or b2 is null then 'FAIL' else 'PASS' end, left(coalesce(b2,'null'),80);
   r := pg_temp.scalar(v2,'authenticated', format($s$select public.cancel_booking(%L::uuid)::text$s$, b2));

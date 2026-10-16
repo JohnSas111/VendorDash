@@ -10,6 +10,7 @@ import {
 } from "@/lib/floorMapPanel";
 import {
   BREAKPOINT,
+  CARD_SHADOW,
   COLORS,
   formatDate,
   RADIUS,
@@ -339,13 +340,13 @@ const styles = StyleSheet.create({
   legendText: { fontSize: Typography.sm, color: COLORS.slate },
   emptyState: {
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: COLORS.hairline,
     padding: Spacing.xl,
     alignItems: "center",
     gap: Spacing.xs,
-    ...Shadow.sm,
+    ...CARD_SHADOW,
   },
   emptyStateText: { color: COLORS.slate, fontSize: Typography.md },
   floorPlan: { gap: 0 },

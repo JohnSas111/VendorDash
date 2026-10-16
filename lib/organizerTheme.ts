@@ -1,42 +1,59 @@
 // lib/organizerTheme.ts
 // Shared design tokens for the organizer web/mobile screens.
 //
-// UPDATED: now sources actual color values from constants/theme.ts —
-// the same palette the vendor app already uses — instead of the
-// separate navy/teal/clay palette from the original organizer Figma
-// brief. Every exported name (COLORS.inkNavy, COLORS.teal, etc.) stays
-// the same on purpose, so none of the organizer screens that already
-// import COLORS.inkNavy/teal/clay/amber/slate/paper need to change —
-// only the hex values behind those names changed. Spacing/Radius also
-// now come from constants/theme.ts.
+// "Warm market" look: cream page, white soft-shadow cards, a dark sidebar
+// and amber / green accents. Every exported name (COLORS.inkNavy, COLORS.teal,
+// shared.card, ...) is unchanged on purpose, so all organizer screens pick up
+// the new look from here. Only the organizer website uses this file, so
+// changing it needs no new phone app build.
 
-import { Colors, Radius, Shadow } from "@/constants/theme";
-import { StyleSheet } from "react-native";
+import { Colors } from "@/constants/theme";
+import { Platform, StyleSheet } from "react-native";
 
 export const COLORS = {
-  inkNavy: Colors.text, // was '#16192B', now the app's actual text color
-  paper: Colors.background, // was '#FAF8F4'
+  inkNavy: Colors.text, // main text and dark buttons
+  paper: "#FAF5EC", // warm cream page background
   white: Colors.white,
-  amber: Colors.reserved, // was '#E8983A'
-  teal: Colors.available, // was '#1F6E63'
-  clay: Colors.booked, // was '#C1502E'
+  amber: Colors.reserved,
+  teal: Colors.available,
+  clay: Colors.booked,
   // Text-safe variants: use these (not teal/clay/amber) for text on light
   // backgrounds; teal/clay/amber stay for fills, borders and icons.
   tealText: Colors.availableText,
   clayText: Colors.dangerText,
   amberText: Colors.warningText,
-  slate: Colors.textMuted, // was '#5B6072'
-  border: Colors.border, // was '#E7E3D8'
+  slate: Colors.textMuted,
+  border: "#EADFCB", // warm outline (inputs, chips)
+  hairline: "#F0E7D6", // very light dividers and card edges
+  dark: "#1A1A1A", // sidebar and dark tiles
+  onDark: Colors.onDarkMuted, // muted text on the dark sidebar
+  rowSelected: "#FDF8EE", // selected table row
+  tintAmber: Colors.warningLight,
+  tintRed: Colors.dangerLight,
+  tintGreen: Colors.successLight,
 };
 
-export const RADIUS = { sm: Radius.sm, md: Radius.md, lg: Radius.lg };
+export const RADIUS = { sm: 12, md: 18, lg: 22 };
+
+// Soft warm shadow used by cards (matches the mockup).
+export const CARD_SHADOW = {
+  shadowColor: "#3C2800",
+  shadowOffset: { width: 0, height: 2 },
+  shadowOpacity: 0.08,
+  shadowRadius: 10,
+  elevation: 2,
+};
+
+// Georgia on the web (what the mockup uses); the system serif on phones.
+export const SERIF = Platform.select({
+  web: "Georgia, 'Times New Roman', serif",
+  default: "serif",
+}) as string;
 
 // Desktop = sidebar + tables, Mobile = bottom tabs + stacked cards
 export const BREAKPOINT = 768;
 
 // Common building blocks reused across organizer screens.
-// fontFamily: 'serif' is a placeholder — swap once a real font is
-// loaded via expo-font.
 export const shared = StyleSheet.create({
   screen: { flex: 1, backgroundColor: COLORS.paper },
   content: { padding: 20, paddingBottom: 48 },
@@ -54,8 +71,9 @@ export const shared = StyleSheet.create({
     padding: 24,
   },
   title: {
-    fontFamily: "serif",
-    fontSize: 28,
+    fontFamily: SERIF,
+    fontSize: 34,
+    fontWeight: "400",
     color: COLORS.inkNavy,
     marginBottom: 4,
   },
@@ -63,45 +81,44 @@ export const shared = StyleSheet.create({
   errorText: { color: COLORS.clayText, fontSize: 14 },
   card: {
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 16,
-    ...Shadow.sm,
+    borderColor: COLORS.hairline,
+    padding: 20,
+    ...CARD_SHADOW,
   },
   row: {
     backgroundColor: COLORS.white,
     borderRadius: RADIUS.md,
     borderWidth: 1,
-    borderColor: COLORS.border,
+    borderColor: COLORS.hairline,
     padding: 14,
     gap: 10,
-    ...Shadow.sm,
+    ...CARD_SHADOW,
   },
   rowDesktop: {
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "space-between",
   },
-  rowTitle: { fontSize: 15, fontWeight: "600", color: COLORS.inkNavy },
+  rowTitle: { fontSize: 15, fontWeight: "700", color: COLORS.inkNavy },
   rowSubtitle: { fontSize: 13, color: COLORS.slate, marginTop: 2 },
   sectionHeading: {
-    fontSize: 13,
-    fontWeight: "700",
-    color: COLORS.slate,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
+    fontFamily: SERIF,
+    fontSize: 21,
+    fontWeight: "400",
+    color: COLORS.inkNavy,
     marginTop: 28,
     marginBottom: 12,
   },
   emptyState: {
     backgroundColor: COLORS.white,
-    borderRadius: RADIUS.md,
+    borderRadius: RADIUS.lg,
     borderWidth: 1,
-    borderColor: COLORS.border,
-    padding: 20,
+    borderColor: COLORS.hairline,
+    padding: 24,
     alignItems: "center",
-    ...Shadow.sm,
+    ...CARD_SHADOW,
   },
   emptyStateText: { color: COLORS.slate, fontSize: 14 },
   primaryButton: {
@@ -113,9 +130,9 @@ export const shared = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  primaryButtonText: { color: COLORS.white, fontWeight: "600", fontSize: 14 },
+  primaryButtonText: { color: COLORS.white, fontWeight: "700", fontSize: 14 },
   secondaryButton: {
-    backgroundColor: COLORS.paper,
+    backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: RADIUS.sm,
@@ -131,7 +148,7 @@ export const shared = StyleSheet.create({
     fontSize: 14,
   },
   dangerOutlineButton: {
-    backgroundColor: COLORS.paper,
+    backgroundColor: COLORS.white,
     borderWidth: 1,
     borderColor: COLORS.clay,
     borderRadius: RADIUS.sm,
@@ -155,13 +172,13 @@ export const shared = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  successButtonText: { color: COLORS.inkNavy, fontWeight: "600", fontSize: 13 },
+  successButtonText: { color: COLORS.inkNavy, fontWeight: "700", fontSize: 13 },
   input: {
     borderWidth: 1,
     borderColor: COLORS.border,
     borderRadius: RADIUS.sm,
     paddingVertical: 10,
-    paddingHorizontal: 12,
+    paddingHorizontal: 14,
     fontSize: 14,
     color: COLORS.inkNavy,
     backgroundColor: COLORS.white,
@@ -179,7 +196,21 @@ export const shared = StyleSheet.create({
     paddingHorizontal: 10,
     alignSelf: "flex-start",
   },
-  badgeText: { fontSize: 12, fontWeight: "600" },
+  badgeText: { fontSize: 12, fontWeight: "700" },
+  // Round filter buttons ("All / Paid / Waiting ...").
+  chip: {
+    height: 40,
+    paddingHorizontal: 16,
+    borderRadius: 20,
+    backgroundColor: COLORS.white,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  chipActive: { backgroundColor: COLORS.dark, borderColor: COLORS.dark },
+  chipText: { fontSize: 13, fontWeight: "600", color: COLORS.inkNavy },
+  chipTextActive: { color: COLORS.white, fontWeight: "700" },
 });
 
 export function formatDate(iso: string) {
