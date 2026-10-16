@@ -1466,6 +1466,40 @@ $$;
 ALTER FUNCTION "public"."prevent_vendor_verification_change"() OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."register_push_token"("p_token" "text", "p_platform" "text" DEFAULT 'android'::"text") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'not signed in' using errcode = '28000';
+  end if;
+  if not exists (select 1 from public.profiles where id = v_uid) then
+    raise exception 'profile not found' using errcode = 'P0002';
+  end if;
+  if p_token is null
+     or not (p_token like 'ExponentPushToken[%]' or p_token like 'ExpoPushToken[%]') then
+    raise exception 'invalid push token' using errcode = '22023';
+  end if;
+  if p_platform is null or p_platform not in ('android', 'ios') then
+    raise exception 'invalid platform' using errcode = '22023';
+  end if;
+
+  insert into public.push_tokens (user_id, token, platform)
+  values (v_uid, p_token, p_platform)
+  on conflict (token) do update
+    set user_id = excluded.user_id,
+        platform = excluded.platform,
+        updated_at = now();
+end;
+$$;
+
+
+ALTER FUNCTION "public"."register_push_token"("p_token" "text", "p_platform" "text") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."reject_booking"("p_booking_id" "uuid", "p_reason" "text" DEFAULT NULL::"text") RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -1831,6 +1865,24 @@ $$;
 ALTER FUNCTION "public"."undo_check_in"("p_booking_id" "uuid", "p_reason" "text") OWNER TO "postgres";
 
 
+CREATE OR REPLACE FUNCTION "public"."unregister_push_token"("p_token" "text") RETURNS "void"
+    LANGUAGE "plpgsql" SECURITY DEFINER
+    SET "search_path" TO ''
+    AS $$
+declare
+  v_uid uuid := auth.uid();
+begin
+  if v_uid is null then
+    raise exception 'not signed in' using errcode = '28000';
+  end if;
+  delete from public.push_tokens where token = p_token and user_id = v_uid;
+end;
+$$;
+
+
+ALTER FUNCTION "public"."unregister_push_token"("p_token" "text") OWNER TO "postgres";
+
+
 CREATE OR REPLACE FUNCTION "public"."verify_vendor"("p_vendor_id" "uuid", "p_verified" boolean) RETURNS "void"
     LANGUAGE "plpgsql" SECURITY DEFINER
     SET "search_path" TO ''
@@ -1981,6 +2033,21 @@ CREATE TABLE IF NOT EXISTS "public"."profiles" (
 ALTER TABLE "public"."profiles" OWNER TO "postgres";
 
 
+CREATE TABLE IF NOT EXISTS "public"."push_tokens" (
+    "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
+    "user_id" "uuid" NOT NULL,
+    "token" "text" NOT NULL,
+    "platform" "text" DEFAULT 'android'::"text" NOT NULL,
+    "created_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    "updated_at" timestamp with time zone DEFAULT "now"() NOT NULL,
+    CONSTRAINT "push_tokens_platform_check" CHECK (("platform" = ANY (ARRAY['android'::"text", 'ios'::"text"]))),
+    CONSTRAINT "push_tokens_token_check" CHECK ((("token" ~~ 'ExponentPushToken[%]'::"text") OR ("token" ~~ 'ExpoPushToken[%]'::"text")))
+);
+
+
+ALTER TABLE "public"."push_tokens" OWNER TO "postgres";
+
+
 CREATE TABLE IF NOT EXISTS "public"."refund_requests" (
     "id" "uuid" DEFAULT "gen_random_uuid"() NOT NULL,
     "booking_id" "uuid" NOT NULL,
@@ -2104,6 +2171,16 @@ ALTER TABLE ONLY "public"."profiles"
 
 
 
+ALTER TABLE ONLY "public"."push_tokens"
+    ADD CONSTRAINT "push_tokens_pkey" PRIMARY KEY ("id");
+
+
+
+ALTER TABLE ONLY "public"."push_tokens"
+    ADD CONSTRAINT "push_tokens_token_key" UNIQUE ("token");
+
+
+
 ALTER TABLE ONLY "public"."refund_requests"
     ADD CONSTRAINT "refund_requests_pkey" PRIMARY KEY ("id");
 
@@ -2193,6 +2270,10 @@ CREATE INDEX "idx_payments_booking" ON "public"."payments" USING "btree" ("booki
 
 
 
+CREATE INDEX "idx_push_tokens_user" ON "public"."push_tokens" USING "btree" ("user_id");
+
+
+
 CREATE INDEX "idx_refund_requests_booking" ON "public"."refund_requests" USING "btree" ("booking_id");
 
 
@@ -2242,6 +2323,10 @@ CREATE OR REPLACE TRIGGER "prevent_vendor_verification_change" BEFORE UPDATE ON 
 
 
 CREATE OR REPLACE TRIGGER "reset_verification_on_permit_change" BEFORE UPDATE ON "public"."vendor_details" FOR EACH ROW EXECUTE FUNCTION "public"."reset_verification_on_permit_change"();
+
+
+
+CREATE OR REPLACE TRIGGER "send_push" AFTER INSERT ON "public"."notifications" FOR EACH ROW EXECUTE FUNCTION "supabase_functions"."http_request"('https://nlqginsialljxoegxfio.supabase.co/functions/v1/send-push', 'POST', '{"Content-type":"application/json","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5scWdpbnNpYWxsanhvZWd4ZmlvIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzA0NTg5OCwiZXhwIjoyMTAyNjIxODk4fQ.KTjCOP6_QCWDa9JFz6jz32na8s7PznYBQew7zPDwpB4","x-webhook-secret":"f4faee180c54452393ce9e62bf1a421908084ab01099468e989fc6e67cda3a0c"}', '{}', '5000');
 
 
 
@@ -2301,6 +2386,11 @@ ALTER TABLE ONLY "public"."payments"
 
 ALTER TABLE ONLY "public"."profiles"
     ADD CONSTRAINT "profiles_id_fkey" FOREIGN KEY ("id") REFERENCES "auth"."users"("id") ON DELETE CASCADE;
+
+
+
+ALTER TABLE ONLY "public"."push_tokens"
+    ADD CONSTRAINT "push_tokens_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "public"."profiles"("id") ON DELETE CASCADE;
 
 
 
@@ -2477,6 +2567,9 @@ ALTER TABLE "public"."payments" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."profiles" ENABLE ROW LEVEL SECURITY;
+
+
+ALTER TABLE "public"."push_tokens" ENABLE ROW LEVEL SECURITY;
 
 
 ALTER TABLE "public"."refund_requests" ENABLE ROW LEVEL SECURITY;
@@ -2725,6 +2818,11 @@ GRANT ALL ON FUNCTION "public"."prevent_vendor_verification_change"() TO "servic
 
 
 
+REVOKE ALL ON FUNCTION "public"."register_push_token"("p_token" "text", "p_platform" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."register_push_token"("p_token" "text", "p_platform" "text") TO "authenticated";
+
+
+
 REVOKE ALL ON FUNCTION "public"."reject_booking"("p_booking_id" "uuid", "p_reason" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."reject_booking"("p_booking_id" "uuid", "p_reason" "text") TO "service_role";
 GRANT ALL ON FUNCTION "public"."reject_booking"("p_booking_id" "uuid", "p_reason" "text") TO "authenticated";
@@ -2769,6 +2867,11 @@ GRANT ALL ON FUNCTION "public"."submit_sales"("p_booking_id" "uuid", "p_gross_sa
 REVOKE ALL ON FUNCTION "public"."undo_check_in"("p_booking_id" "uuid", "p_reason" "text") FROM PUBLIC;
 GRANT ALL ON FUNCTION "public"."undo_check_in"("p_booking_id" "uuid", "p_reason" "text") TO "service_role";
 GRANT ALL ON FUNCTION "public"."undo_check_in"("p_booking_id" "uuid", "p_reason" "text") TO "authenticated";
+
+
+
+REVOKE ALL ON FUNCTION "public"."unregister_push_token"("p_token" "text") FROM PUBLIC;
+GRANT ALL ON FUNCTION "public"."unregister_push_token"("p_token" "text") TO "authenticated";
 
 
 
@@ -2845,6 +2948,10 @@ GRANT INSERT("full_name"),UPDATE("full_name") ON TABLE "public"."profiles" TO "a
 
 
 GRANT UPDATE("phone") ON TABLE "public"."profiles" TO "authenticated";
+
+
+
+GRANT ALL ON TABLE "public"."push_tokens" TO "service_role";
 
 
 
