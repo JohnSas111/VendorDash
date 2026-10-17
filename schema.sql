@@ -1,6 +1,3 @@
-
-
-
 SET statement_timeout = 0;
 SET lock_timeout = 0;
 SET idle_in_transaction_session_timeout = 0;
@@ -2326,7 +2323,7 @@ CREATE OR REPLACE TRIGGER "reset_verification_on_permit_change" BEFORE UPDATE ON
 
 
 
-CREATE OR REPLACE TRIGGER "send_push" AFTER INSERT ON "public"."notifications" FOR EACH ROW EXECUTE FUNCTION "supabase_functions"."http_request"('https://nlqginsialljxoegxfio.supabase.co/functions/v1/send-push', 'POST', '{"Content-type":"application/json","Authorization":"Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im5scWdpbnNpYWxsanhvZWd4ZmlvIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4NzA0NTg5OCwiZXhwIjoyMTAyNjIxODk4fQ.KTjCOP6_QCWDa9JFz6jz32na8s7PznYBQew7zPDwpB4","x-webhook-secret":"f4faee180c54452393ce9e62bf1a421908084ab01099468e989fc6e67cda3a0c"}', '{}', '5000');
+CREATE OR REPLACE TRIGGER "send_push" AFTER INSERT ON "public"."notifications" FOR EACH ROW EXECUTE FUNCTION "supabase_functions"."http_request"('https://nlqginsialljxoegxfio.supabase.co/functions/v1/send-push', 'POST', '{"Content-type":"application/json","Authorization":"Bearer REDACTED","x-webhook-secret":"REDACTED"}', '{}', '5000');
 
 
 
@@ -3056,10 +3053,3 @@ ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TAB
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLES TO "anon";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT SELECT,REFERENCES,TRIGGER,MAINTAIN ON TABLES TO "authenticated";
 ALTER DEFAULT PRIVILEGES FOR ROLE "postgres" IN SCHEMA "public" GRANT ALL ON TABLES TO "service_role";
-
-
-
-
-
-
-
