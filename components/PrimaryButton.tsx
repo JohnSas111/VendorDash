@@ -3,7 +3,8 @@
 // The same dark button (Log in, Pay, Continue, Save...) was being redefined
 // on every screen. This is that button, written once.
 
-import { Colors, Radius, Shadow, Typography } from "@/constants/theme";
+import { Colors, Shadow, Typography } from "@/constants/theme";
+import { RADIUS } from "@/lib/organizerTheme";
 import {
   ActivityIndicator,
   GestureResponderEvent,
@@ -60,7 +61,7 @@ export function PrimaryButton({
 const styles = StyleSheet.create({
   button: {
     backgroundColor: Colors.text,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     padding: 14,
     minHeight: 44,
     alignItems: "center",

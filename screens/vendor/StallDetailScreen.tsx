@@ -1,5 +1,6 @@
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import { CARD_SHADOW, COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { router, useLocalSearchParams } from "expo-router";
@@ -251,12 +252,12 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.xl,
   },
   header: {
-    backgroundColor: Colors.available,
-    borderRadius: Radius.md,
+    backgroundColor: COLORS.dark,
+    borderRadius: RADIUS.md,
     padding: Spacing.xl,
     alignItems: "center",
     marginBottom: Spacing.xl,
-    ...Shadow.sm,
+    ...CARD_SHADOW,
   },
   skeletonHeader: {
     backgroundColor: Colors.borderLight,
@@ -271,51 +272,53 @@ const styles = StyleSheet.create({
   },
   headerTitle: {
     color: Colors.white,
-    fontSize: Typography.md,
-    fontWeight: "600",
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
   },
   headerSubtitle: {
-    color: Colors.white,
-    fontSize: Typography.sm,
+    color: COLORS.onDark,
+    fontSize: Typography.base,
     marginTop: Spacing.xs,
   },
   label: {
-    fontSize: Typography.sm,
-    color: Colors.textMuted,
-    marginBottom: Spacing.sm,
+    fontFamily: SERIF,
+    fontSize: 20,
+    color: Colors.text,
+    marginBottom: Spacing.md,
   },
   dayRow: { flexDirection: "row", gap: Spacing.sm, marginBottom: Spacing.lg },
   dayBox: {
     flex: 1,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.sm,
-    paddingVertical: Spacing.md,
+    borderRadius: RADIUS.sm,
+    paddingVertical: Spacing.lg,
     alignItems: "center",
     backgroundColor: Colors.white,
   },
   dayBoxSelected: {
-    borderColor: Colors.info,
+    borderColor: Colors.reserved,
     borderWidth: 2,
-    backgroundColor: Colors.infoLight,
+    backgroundColor: Colors.warningLight,
   },
-  dayText: { fontSize: Typography.base, fontWeight: "500", color: Colors.text },
+  dayText: { fontSize: Typography.md, fontWeight: "600", color: Colors.text },
   toggleRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.sm,
-    padding: Spacing.md,
+    borderRadius: RADIUS.sm,
+    padding: Spacing.lg,
     marginBottom: Spacing.xl,
     backgroundColor: Colors.white,
   },
-  toggleLabel: { fontSize: Typography.sm, color: Colors.textMuted },
+  toggleLabel: { fontSize: Typography.md, color: Colors.text },
   footer: {
     marginTop: "auto",
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: COLORS.hairline,
     paddingTop: Spacing.lg,
   },
   totalRow: {
@@ -323,10 +326,10 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     marginBottom: Spacing.md,
   },
-  totalLabel: { fontSize: Typography.base, color: Colors.textMuted },
+  totalLabel: { fontSize: Typography.md, color: Colors.textMuted },
   totalValue: {
-    fontSize: Typography.xl,
-    fontWeight: "600",
+    fontFamily: SERIF,
+    fontSize: 26,
     color: Colors.text,
   },
 });

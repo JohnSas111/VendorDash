@@ -1,6 +1,8 @@
 import { ConfirmModal } from "@/components/ConfirmModal";
+import { Pagination } from "@/components/organizer/Pagination";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import { usePaging } from "@/hooks/usePaging";
 import { CARD_SHADOW, COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
@@ -158,6 +160,10 @@ export default function MyBookingsScreen() {
   const upcoming = bookings.filter(isUpcoming);
   const history = bookings.filter((b) => !isUpcoming(b));
 
+  // 10 cards per page in each section (same helpers as the organizer lists).
+  const upcomingPaging = usePaging(upcoming, "upcoming");
+  const historyPaging = usePaging(history, "history");
+
   // Only money that was actually paid counts. Pending, failed and refunded
   // payment rows used to be added in as well.
   const totalSpent = bookings.reduce((sum, b) => {
@@ -187,6 +193,40 @@ export default function MyBookingsScreen() {
     });
   }
 
+  // Small colored tile on each card, like Home: amber = waiting on someone,
+  // green = paid and in play, grey = finished or closed.
+  function cardIcon(status: string) {
+    const green = status === "paid" || status === "checked_in";
+    const amber = status === "pending" || status === "approved";
+    return (
+      <View
+        style={[
+          styles.cardIconTile,
+          green && styles.cardIconGreen,
+          amber && styles.cardIconAmber,
+        ]}
+      >
+        <Ionicons
+          name={
+            green
+              ? "checkmark-circle-outline"
+              : amber
+                ? "time-outline"
+                : "receipt-outline"
+          }
+          size={22}
+          color={
+            green
+              ? Colors.availableText
+              : amber
+                ? Colors.warningText
+                : Colors.textMuted
+          }
+        />
+      </View>
+    );
+  }
+
   function renderUpcomingCard(item: BookingRow) {
     const dateLabel = item.market_sessions
       ? formatDateRange(
@@ -209,13 +249,16 @@ export default function MyBookingsScreen() {
           }
         >
           <View style={styles.cardRow}>
-            <Text style={styles.cardTitle}>{dateLabel}</Text>
+            {cardIcon(item.status)}
+            <View style={styles.cardTitleWrap}>
+              <Text style={styles.cardTitle}>{dateLabel}</Text>
+              <Text style={styles.cardSubtitle}>
+                Stall {item.stalls?.stall_number ?? "—"} ·{" "}
+                {upcomingHint(item.status)}
+              </Text>
+            </View>
             <StatusBadge status={item.status} />
           </View>
-          <Text style={styles.cardSubtitle}>
-            Stall {item.stalls?.stall_number ?? "—"} ·{" "}
-            {upcomingHint(item.status)}
-          </Text>
           {refundNote(item) && (
             <Text style={styles.refundNote}>{refundNote(item)}</Text>
           )}
@@ -257,7 +300,8 @@ export default function MyBookingsScreen() {
     return (
       <View style={styles.card} key={item.id}>
         <View style={styles.cardRow}>
-          <View>
+          {cardIcon(item.status)}
+          <View style={styles.cardTitleWrap}>
             <Text style={styles.cardTitle}>{dateLabel}</Text>
             <Text style={styles.cardSubtitle}>
               Stall {item.stalls?.stall_number ?? "—"} · {daysLabel}
@@ -304,63 +348,80 @@ export default function MyBookingsScreen() {
   }
 
   return (
-    <View style={[styles.container, { paddingTop: insets.top + Spacing.md }]}>
-      <Text style={styles.title}>My Bookings</Text>
-
-      {loadError && (
-        <View style={styles.errorBanner}>
-          <Ionicons
-            name="alert-circle-outline"
-            size={16}
-            color={Colors.booked}
-          />
-          <Text style={styles.errorBannerText}>{loadError}</Text>
-        </View>
-      )}
-
-      <View style={styles.metricsRow}>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>This weekend</Text>
-          <Text style={styles.metricValue}>
-            {upcoming.length > 0 ? `Stall ${thisWeekendStall}` : "None"}
-          </Text>
-        </View>
-        <View style={styles.metricCard}>
-          <Text style={styles.metricLabel}>Total spent</Text>
-          <Text style={styles.metricValue}>
-            ₱{(totalSpent / 100).toLocaleString()}
-          </Text>
+    <View style={styles.container}>
+      <View style={[styles.header, { paddingTop: insets.top + Spacing.md }]}>
+        <Text style={styles.title}>My Bookings</Text>
+        <View style={styles.metricsRow}>
+          <View style={[styles.metricCard, styles.metricDark]}>
+            <Text style={[styles.metricLabel, styles.metricLabelLight]}>
+              This weekend
+            </Text>
+            <Text style={[styles.metricValue, styles.metricValueLight]}>
+              {upcoming.length > 0 ? `Stall ${thisWeekendStall}` : "None"}
+            </Text>
+          </View>
+          <View style={[styles.metricCard, styles.metricAmber]}>
+            <Text style={styles.metricLabel}>Total spent</Text>
+            <Text style={styles.metricValue}>
+              ₱{(totalSpent / 100).toLocaleString()}
+            </Text>
+          </View>
         </View>
       </View>
 
-      {loading ? (
-        <BookingsSkeleton />
-      ) : (
-        <FlatList
-          data={[]}
-          renderItem={null}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-          ListHeaderComponent={
-            <View>
-              <Text style={styles.sectionLabel}>Upcoming</Text>
-              {upcoming.length === 0 && (
-                <Text style={styles.emptyText}>No upcoming bookings.</Text>
-              )}
-              {upcoming.map(renderUpcomingCard)}
+      <View style={styles.body}>
+        {loadError && (
+          <View style={styles.errorBanner}>
+            <Ionicons
+              name="alert-circle-outline"
+              size={16}
+              color={Colors.dangerText}
+            />
+            <Text style={styles.errorBannerText}>{loadError}</Text>
+          </View>
+        )}
 
-              <Text style={[styles.sectionLabel, { marginTop: Spacing.lg }]}>
-                History
-              </Text>
-              {history.length === 0 && (
-                <Text style={styles.emptyText}>No past bookings yet.</Text>
-              )}
-              {history.map(renderHistoryCard)}
-            </View>
-          }
-        />
-      )}
+        {loading ? (
+          <BookingsSkeleton />
+        ) : (
+          <FlatList
+            data={[]}
+            renderItem={null}
+            refreshControl={
+              <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+            }
+            ListHeaderComponent={
+              <View>
+                <Text style={styles.sectionLabel}>Upcoming</Text>
+                {upcoming.length === 0 && (
+                  <Text style={styles.emptyText}>No upcoming bookings.</Text>
+                )}
+                {upcomingPaging.pageItems.map(renderUpcomingCard)}
+                <Pagination
+                  page={upcomingPaging.page}
+                  total={upcomingPaging.total}
+                  noun="bookings"
+                  onPage={upcomingPaging.setPage}
+                />
+
+                <Text style={[styles.sectionLabel, { marginTop: Spacing.lg }]}>
+                  History
+                </Text>
+                {history.length === 0 && (
+                  <Text style={styles.emptyText}>No past bookings yet.</Text>
+                )}
+                {historyPaging.pageItems.map(renderHistoryCard)}
+                <Pagination
+                  page={historyPaging.page}
+                  total={historyPaging.total}
+                  noun="bookings"
+                  onPage={historyPaging.setPage}
+                />
+              </View>
+            }
+          />
+        )}
+      </View>
 
       <ConfirmModal
         visible={!!pendingCancel}
@@ -401,16 +462,20 @@ function BookingsSkeleton() {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: Colors.background,
-    padding: Spacing.xl,
+  container: { flex: 1, backgroundColor: Colors.background },
+  header: {
+    backgroundColor: COLORS.dark,
+    borderBottomLeftRadius: 36,
+    borderBottomRightRadius: 36,
+    paddingHorizontal: Spacing.xl,
+    paddingBottom: Spacing.xl,
   },
+  body: { flex: 1, paddingHorizontal: Spacing.xl, paddingTop: Spacing.lg },
   title: {
     fontFamily: SERIF,
     fontSize: 30,
     fontWeight: "400",
-    color: Colors.text,
+    color: Colors.white,
     marginBottom: Spacing.lg,
   },
   errorBanner: {
@@ -427,31 +492,45 @@ const styles = StyleSheet.create({
     color: Colors.dangerText,
     flex: 1,
   },
-  metricsRow: {
-    flexDirection: "row",
-    gap: Spacing.sm,
-    marginBottom: Spacing.lg,
-  },
+  metricsRow: { flexDirection: "row", gap: Spacing.sm },
   metricCard: {
     flex: 1,
-    backgroundColor: Colors.white,
-    borderRadius: RADIUS.md,
-    borderWidth: 1,
-    borderColor: COLORS.hairline,
+    borderRadius: RADIUS.sm + 4,
     padding: Spacing.lg,
-    ...CARD_SHADOW,
+    minHeight: 84,
+    justifyContent: "space-between",
   },
-  metricLabel: { fontSize: Typography.xs, color: Colors.textMuted },
+  metricDark: { backgroundColor: "#2B2B2B" },
+  metricAmber: { backgroundColor: Colors.reserved },
+  metricLabel: {
+    fontSize: Typography.sm,
+    fontWeight: "600",
+    color: Colors.text,
+  },
+  metricLabelLight: { color: COLORS.onDark },
   metricValue: {
     fontFamily: SERIF,
-    fontSize: 20,
+    fontSize: 24,
     fontWeight: "400",
     color: Colors.text,
     marginTop: Spacing.xs,
   },
+  metricValueLight: { color: Colors.white },
+  cardIconTile: {
+    width: 48,
+    height: 48,
+    borderRadius: 14,
+    backgroundColor: Colors.borderLight,
+    alignItems: "center",
+    justifyContent: "center",
+    marginRight: Spacing.md,
+  },
+  cardIconAmber: { backgroundColor: Colors.warningLight },
+  cardIconGreen: { backgroundColor: Colors.successLight },
+  cardTitleWrap: { flex: 1, marginRight: Spacing.sm },
   sectionLabel: {
     fontFamily: SERIF,
-    fontSize: 18,
+    fontSize: 22,
     color: Colors.text,
     marginBottom: Spacing.md,
   },
@@ -475,20 +554,16 @@ const styles = StyleSheet.create({
     borderRadius: Radius.xs,
     backgroundColor: Colors.borderLight,
   },
-  cardRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-  },
+  cardRow: { flexDirection: "row", alignItems: "center" },
   cardTitle: {
-    fontSize: Typography.md,
-    fontWeight: "700",
+    fontFamily: SERIF,
+    fontSize: 18,
     color: Colors.text,
   },
   cardSubtitle: {
-    fontSize: Typography.xs,
+    fontSize: Typography.base,
     color: Colors.textMuted,
-    marginTop: Spacing.xs,
+    marginTop: 2,
   },
   refundNote: {
     fontSize: Typography.xs,

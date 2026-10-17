@@ -1,5 +1,6 @@
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Shadow, Spacing, Typography } from "@/constants/theme";
+import { Colors, Shadow, Spacing } from "@/constants/theme";
+import { SERIF } from "@/lib/organizerTheme";
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
 import { useEffect, useState } from "react";
@@ -70,13 +71,14 @@ const styles = StyleSheet.create({
     ...Shadow.md,
   },
   title: {
-    fontSize: Typography.xl,
-    fontWeight: "700",
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
     color: Colors.text,
-    marginBottom: Spacing.xs,
+    marginBottom: Spacing.sm,
   },
   subtitle: {
-    fontSize: Typography.base,
+    fontSize: 15,
     color: Colors.textMuted,
     textAlign: "center",
     marginBottom: Spacing.xxxl,

@@ -1,5 +1,6 @@
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import { CARD_SHADOW, COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { Ionicons } from "@expo/vector-icons";
 import { router, useFocusEffect } from "expo-router";
@@ -396,7 +397,7 @@ export default function FloorMapScreen() {
           <Ionicons
             name="information-circle-outline"
             size={16}
-            color={Colors.info}
+            color={Colors.warningText}
           />
           <Text style={styles.infoBannerText}>
             You already have stall {myStall.stall_number} in this market. Tap it
@@ -460,7 +461,7 @@ export default function FloorMapScreen() {
                       <Ionicons
                         name={style.icon}
                         size={13}
-                        color={Colors.white}
+                        color={Colors.text}
                       />
                       <Text style={styles.tileText}>{item.stall_number}</Text>
                       {word !== "" && (
@@ -486,7 +487,7 @@ export default function FloorMapScreen() {
               <View
                 style={[styles.legendDot, { backgroundColor: style.color }]}
               >
-                <Ionicons name={style.icon} size={9} color={Colors.white} />
+                <Ionicons name={style.icon} size={9} color={Colors.text} />
               </View>
               <Text style={styles.legendText}>{style.label}</Text>
             </View>
@@ -543,11 +544,16 @@ const styles = StyleSheet.create({
     padding: Spacing.lg,
     paddingTop: Spacing.xl,
   },
-  title: { fontSize: Typography.lg, fontWeight: "600", color: Colors.text },
+  title: {
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
+    color: Colors.text,
+  },
   subtitle: {
-    fontSize: Typography.sm,
+    fontSize: Typography.base,
     color: Colors.textMuted,
-    marginBottom: Spacing.md,
+    marginBottom: Spacing.lg,
   },
   chipScroll: { flexGrow: 0, marginBottom: Spacing.md },
   chipRow: { gap: Spacing.sm },
@@ -560,14 +566,14 @@ const styles = StyleSheet.create({
     borderColor: Colors.border,
   },
   chipActive: { backgroundColor: Colors.text, borderColor: Colors.text },
-  chipText: { fontSize: Typography.sm, color: Colors.text },
+  chipText: { fontSize: Typography.base, color: Colors.text },
   chipTextActive: { color: Colors.white, fontWeight: "600" },
   errorBanner: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.sm,
     backgroundColor: Colors.dangerLight,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     padding: Spacing.md,
     marginBottom: Spacing.md,
   },
@@ -586,31 +592,35 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.sm,
-    backgroundColor: Colors.infoLight,
-    borderRadius: Radius.sm,
+    backgroundColor: Colors.warningLight,
+    borderRadius: RADIUS.sm,
     padding: Spacing.md,
     marginBottom: Spacing.md,
   },
-  infoBannerText: { fontSize: Typography.sm, color: Colors.text, flex: 1 },
+  infoBannerText: {
+    fontSize: Typography.sm,
+    color: Colors.warningText,
+    flex: 1,
+  },
   floorPlan: { paddingBottom: Spacing.md },
   stallRow: { flexDirection: "row", gap: Spacing.sm },
   aisle: { height: Spacing.lg },
   tile: {
     flex: 1,
     aspectRatio: 1,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     alignItems: "center",
     justifyContent: "center",
     gap: 2,
-    ...Shadow.sm,
+    ...CARD_SHADOW,
   },
   tileSelected: { borderWidth: 3, borderColor: Colors.text },
   // Taken stalls are dimmed a little, but still readable (the word on the
   // tile — "Booked" / "Reserved" — must stay legible).
   tileDisabled: { opacity: 0.75 },
-  tileText: { color: Colors.white, fontSize: Typography.xs, fontWeight: "600" },
+  tileText: { color: Colors.text, fontSize: Typography.sm, fontWeight: "700" },
   tileSubText: {
-    color: Colors.white,
+    color: Colors.text,
     fontSize: 9,
     fontWeight: "600",
   },
@@ -621,8 +631,8 @@ const styles = StyleSheet.create({
     gap: Spacing.xs,
   },
   emptyTitle: {
-    fontSize: Typography.md,
-    fontWeight: "600",
+    fontFamily: SERIF,
+    fontSize: 20,
     color: Colors.text,
   },
   emptyText: { fontSize: Typography.base, color: Colors.textMuted },
@@ -640,17 +650,18 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
   },
-  legendText: { fontSize: Typography.xs, color: Colors.textMuted },
+  legendText: { fontSize: Typography.sm, color: Colors.textMuted },
   selectedBar: {
     borderTopWidth: 1,
-    borderTopColor: Colors.borderLight,
+    borderTopColor: COLORS.hairline,
     paddingTop: Spacing.md,
     marginTop: Spacing.md,
   },
   selectedLabel: { fontSize: Typography.sm, color: Colors.textMuted },
   selectedPrice: {
-    fontSize: Typography.lg,
-    fontWeight: "600",
+    fontFamily: SERIF,
+    fontSize: 24,
+    fontWeight: "400",
     color: Colors.text,
     marginTop: 2,
     marginBottom: Spacing.sm,

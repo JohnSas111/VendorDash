@@ -1,5 +1,6 @@
 import { PrimaryButton } from "@/components/PrimaryButton";
-import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { Colors, Spacing, Typography } from "@/constants/theme";
+import { CARD_SHADOW, COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
@@ -143,14 +144,14 @@ export default function PaymentScreen() {
           >
             <Ionicons
               name="wallet-outline"
-              size={18}
-              color={selected ? Colors.info : Colors.textMuted}
+              size={20}
+              color={selected ? Colors.warningText : Colors.textMuted}
             />
             <Text style={styles.methodText}>{m.label}</Text>
             <Ionicons
               name={selected ? "radio-button-on" : "radio-button-off"}
-              size={18}
-              color={selected ? Colors.info : Colors.border}
+              size={20}
+              color={selected ? Colors.warningText : Colors.border}
               style={styles.methodRadio}
             />
           </TouchableOpacity>
@@ -184,44 +185,48 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.xl,
   },
   title: {
-    fontSize: Typography.md,
-    fontWeight: "500",
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
     color: Colors.text,
     marginBottom: Spacing.lg,
   },
   summaryCard: {
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
-    marginBottom: Spacing.lg,
-    ...Shadow.sm,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    padding: Spacing.lg,
+    marginBottom: Spacing.xl,
+    ...CARD_SHADOW,
   },
   summaryRow: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginBottom: Spacing.xs,
+    marginBottom: Spacing.sm,
   },
-  summaryLabel: { fontSize: Typography.base, color: Colors.textMuted },
-  summaryValue: { fontSize: Typography.base, color: Colors.textMuted },
+  summaryLabel: { fontSize: Typography.md, color: Colors.textMuted },
+  summaryValue: { fontSize: Typography.md, color: Colors.textMuted },
   divider: {
     height: 1,
-    backgroundColor: Colors.borderLight,
-    marginVertical: Spacing.xs,
+    backgroundColor: COLORS.hairline,
+    marginVertical: Spacing.sm,
   },
   totalLabel: {
-    fontSize: Typography.md,
-    fontWeight: "600",
+    fontFamily: SERIF,
+    fontSize: 20,
     color: Colors.text,
   },
   totalValue: {
-    fontSize: Typography.md,
-    fontWeight: "600",
+    fontFamily: SERIF,
+    fontSize: 20,
     color: Colors.text,
   },
   label: {
-    fontSize: Typography.sm,
-    color: Colors.textMuted,
-    marginBottom: Spacing.sm,
+    fontFamily: SERIF,
+    fontSize: 20,
+    color: Colors.text,
+    marginBottom: Spacing.md,
   },
   methodBox: {
     flexDirection: "row",
@@ -229,20 +234,20 @@ const styles = StyleSheet.create({
     gap: Spacing.sm,
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.sm,
-    paddingHorizontal: Spacing.md,
+    borderRadius: RADIUS.sm,
+    paddingHorizontal: Spacing.lg,
     marginBottom: Spacing.sm,
-    minHeight: 44,
+    minHeight: 54,
     backgroundColor: Colors.white,
   },
   methodBoxSelected: {
-    borderColor: Colors.info,
+    borderColor: Colors.reserved,
     borderWidth: 2,
-    backgroundColor: Colors.infoLight,
+    backgroundColor: Colors.warningLight,
   },
-  methodText: { fontSize: Typography.base, color: Colors.text, flex: 1 },
+  methodText: { fontSize: Typography.md, color: Colors.text, flex: 1 },
   methodRadio: { marginLeft: "auto" },
-  buttonWrap: { marginTop: Spacing.sm },
+  buttonWrap: { marginTop: Spacing.lg },
   note: {
     fontSize: Typography.xs,
     color: Colors.textMuted,

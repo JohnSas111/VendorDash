@@ -4,6 +4,7 @@ import { PrimaryButton } from "@/components/PrimaryButton";
 import { StatusBadge } from "@/components/StatusBadge";
 import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
 import { goBackSafely } from "@/lib/navigation";
+import { CARD_SHADOW, COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
@@ -549,16 +550,27 @@ const styles = StyleSheet.create({
     fontWeight: "600",
     fontSize: Typography.base,
   },
-  title: { fontSize: Typography.xl, fontWeight: "bold", color: Colors.text },
-  subtitle: { fontSize: Typography.sm, color: Colors.textMuted, marginTop: 2 },
+  title: {
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
+    color: Colors.text,
+  },
+  subtitle: {
+    fontSize: Typography.base,
+    color: Colors.textMuted,
+    marginTop: 2,
+  },
   badgeWrap: { marginTop: Spacing.sm, marginBottom: Spacing.xxl },
   qrCard: {
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
+    borderRadius: RADIUS.md,
     padding: Spacing.xxl,
     alignItems: "center",
     marginBottom: Spacing.xl,
-    ...Shadow.sm,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    ...CARD_SHADOW,
   },
   qrDimmed: { opacity: 0.4 },
   qrHint: {
@@ -569,13 +581,15 @@ const styles = StyleSheet.create({
   },
   pendingCard: {
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
+    borderRadius: RADIUS.md,
     padding: Spacing.xl,
     marginBottom: Spacing.xl,
     width: "100%",
     alignItems: "center",
     gap: Spacing.sm,
-    ...Shadow.sm,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    ...CARD_SHADOW,
   },
   pendingText: {
     fontSize: Typography.base,
@@ -585,7 +599,7 @@ const styles = StyleSheet.create({
   },
   approvedCard: {
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
+    borderRadius: RADIUS.md,
     padding: Spacing.xl,
     marginBottom: Spacing.xl,
     width: "100%",
@@ -593,7 +607,7 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: Colors.available,
     gap: Spacing.md,
-    ...Shadow.sm,
+    ...CARD_SHADOW,
   },
   approvedText: {
     fontSize: Typography.md,
@@ -603,10 +617,12 @@ const styles = StyleSheet.create({
   },
   infoCard: {
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
+    borderRadius: RADIUS.md,
     padding: Spacing.md,
     width: "100%",
-    ...Shadow.sm,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    ...CARD_SHADOW,
   },
   infoLabel: { fontSize: Typography.xs, color: Colors.textMuted },
   infoValue: {
@@ -620,11 +636,13 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "space-between",
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
+    borderRadius: RADIUS.md,
     padding: Spacing.md,
     width: "100%",
     marginTop: Spacing.md,
-    ...Shadow.sm,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    ...CARD_SHADOW,
   },
   recurringTextWrap: { flex: 1, marginRight: Spacing.md },
   recurringLabel: {
@@ -641,7 +659,7 @@ const styles = StyleSheet.create({
   refundButton: {
     borderWidth: 1,
     borderColor: Colors.booked,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.xl,
     width: "100%",
@@ -650,7 +668,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
   },
   refundButtonText: {
-    color: Colors.booked,
+    color: Colors.dangerText,
     fontWeight: "600",
     fontSize: Typography.base,
   },
@@ -669,7 +687,7 @@ const styles = StyleSheet.create({
   cancelButton: {
     borderWidth: 1,
     borderColor: Colors.textMuted,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     paddingVertical: Spacing.md,
     paddingHorizontal: Spacing.xl,
     width: "100%",
@@ -694,13 +712,14 @@ const styles = StyleSheet.create({
     width: "100%",
     maxWidth: 420,
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
+    borderRadius: RADIUS.md,
     padding: Spacing.xl,
     ...Shadow.md,
   },
   modalTitle: {
-    fontSize: Typography.lg,
-    fontWeight: "700",
+    fontFamily: SERIF,
+    fontSize: 22,
+    fontWeight: "400",
     color: Colors.text,
     marginBottom: Spacing.xs,
   },
@@ -719,7 +738,7 @@ const styles = StyleSheet.create({
   modalInput: {
     borderWidth: 1,
     borderColor: Colors.border,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     padding: Spacing.md,
     fontSize: Typography.md,
     minHeight: 80,

@@ -1,4 +1,7 @@
-import { Colors, Radius, Shadow, Spacing, Typography } from "@/constants/theme";
+import { Pagination } from "@/components/organizer/Pagination";
+import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
+import { usePaging } from "@/hooks/usePaging";
+import { CARD_SHADOW, COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { Ionicons } from "@expo/vector-icons";
@@ -118,16 +121,25 @@ export default function NotificationsScreen() {
     return `${days}d ago`;
   }
 
+  // 10 notifications per page (same helpers as the organizer lists).
+  const paging = usePaging(notifications, "notifications");
+  const unreadCount = notifications.filter((n) => !n.is_read).length;
+
   return (
     <View style={styles.container}>
       <Text style={styles.title}>Notifications</Text>
+      {!loading && notifications.length > 0 && (
+        <Text style={styles.subtitle}>
+          {unreadCount > 0 ? `${unreadCount} unread` : "You're all caught up"}
+        </Text>
+      )}
 
       {loadError && (
         <View style={styles.errorBanner}>
           <Ionicons
             name="alert-circle-outline"
             size={16}
-            color={Colors.booked}
+            color={Colors.dangerText}
           />
           <Text style={styles.errorBannerText}>{loadError}</Text>
         </View>
@@ -137,37 +149,64 @@ export default function NotificationsScreen() {
         <NotificationsSkeleton />
       ) : (
         <FlatList
-          data={notifications}
+          data={paging.pageItems}
+          contentContainerStyle={{ paddingTop: Spacing.lg }}
           keyExtractor={(item) => item.id}
           refreshControl={
             <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
           }
+          ListFooterComponent={
+            <Pagination
+              page={paging.page}
+              total={paging.total}
+              noun="notifications"
+              onPage={paging.setPage}
+            />
+          }
           ListEmptyComponent={
             <View style={styles.emptyState}>
-              <Ionicons
-                name="notifications-outline"
-                size={28}
-                color={Colors.textMuted}
-              />
-              <Text style={styles.emptyText}>No notifications yet.</Text>
+              <View style={styles.emptyIcon}>
+                <Ionicons
+                  name="notifications-outline"
+                  size={28}
+                  color={Colors.warningText}
+                />
+              </View>
+              <Text style={styles.emptyTitle}>No notifications yet</Text>
+              <Text style={styles.emptyText}>
+                Updates about your bookings will show up here.
+              </Text>
             </View>
           }
           renderItem={({ item }) => (
             <TouchableOpacity
               accessibilityRole="button"
-              style={[styles.card, !item.is_read && styles.cardUnread]}
+              style={styles.card}
               activeOpacity={0.7}
               onPress={() => !item.is_read && markAsRead(item.id)}
             >
-              <Ionicons
-                name={iconFor(item.type)}
-                size={18}
-                color={item.is_read ? Colors.textMuted : Colors.info}
-                style={styles.cardIcon}
-              />
+              <View
+                style={[
+                  styles.iconTile,
+                  !item.is_read && styles.iconTileUnread,
+                ]}
+              >
+                <Ionicons
+                  name={iconFor(item.type)}
+                  size={20}
+                  color={item.is_read ? Colors.textMuted : Colors.warningText}
+                />
+              </View>
               <View style={{ flex: 1 }}>
                 <View style={styles.cardRow}>
-                  <Text style={styles.cardTitle}>{item.title}</Text>
+                  <Text
+                    style={[
+                      styles.cardTitle,
+                      item.is_read && styles.cardTitleRead,
+                    ]}
+                  >
+                    {item.title}
+                  </Text>
                   {!item.is_read && <View style={styles.dot} />}
                 </View>
                 <Text style={styles.cardBody}>{item.body}</Text>
@@ -208,65 +247,101 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.xl,
   },
   title: {
-    fontSize: Typography.lg,
-    fontWeight: "700",
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
     color: Colors.text,
-    marginBottom: Spacing.lg,
+  },
+  subtitle: {
+    fontSize: Typography.base,
+    color: Colors.textMuted,
+    marginTop: 2,
   },
   errorBanner: {
     flexDirection: "row",
     alignItems: "center",
     gap: Spacing.sm,
     backgroundColor: Colors.dangerLight,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     padding: Spacing.md,
-    marginBottom: Spacing.md,
+    marginTop: Spacing.md,
   },
-  errorBannerText: { fontSize: Typography.sm, color: Colors.booked, flex: 1 },
+  errorBannerText: {
+    fontSize: Typography.sm,
+    color: Colors.dangerText,
+    flex: 1,
+  },
   emptyState: {
     alignItems: "center",
     marginTop: Spacing.xxxl + Spacing.lg,
-    gap: Spacing.xs,
+    paddingHorizontal: Spacing.xl,
   },
-  emptyText: { fontSize: Typography.base, color: Colors.textMuted },
+  emptyIcon: {
+    width: 64,
+    height: 64,
+    borderRadius: 20,
+    backgroundColor: Colors.warningLight,
+    alignItems: "center",
+    justifyContent: "center",
+    marginBottom: Spacing.md,
+  },
+  emptyTitle: { fontFamily: SERIF, fontSize: 20, color: Colors.text },
+  emptyText: {
+    fontSize: Typography.base,
+    color: Colors.textMuted,
+    textAlign: "center",
+    marginTop: Spacing.xs,
+  },
   card: {
     flexDirection: "row",
+    alignItems: "flex-start",
     gap: Spacing.md,
     backgroundColor: Colors.white,
-    borderRadius: Radius.md,
-    padding: Spacing.md,
+    borderRadius: RADIUS.md,
+    borderWidth: 1,
+    borderColor: COLORS.hairline,
+    padding: Spacing.lg,
     marginBottom: Spacing.sm,
-    ...Shadow.sm,
+    ...CARD_SHADOW,
   },
-  cardIcon: { marginTop: 2 },
-  cardUnread: { borderLeftWidth: 3, borderLeftColor: Colors.info },
+  iconTile: {
+    width: 40,
+    height: 40,
+    borderRadius: 12,
+    backgroundColor: Colors.borderLight,
+    alignItems: "center",
+    justifyContent: "center",
+  },
+  iconTileUnread: { backgroundColor: Colors.warningLight },
   cardRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "flex-start",
   },
   cardTitle: {
-    fontSize: Typography.base,
-    fontWeight: "600",
+    fontSize: Typography.md,
+    fontWeight: "700",
     color: Colors.text,
     flex: 1,
   },
+  cardTitleRead: { fontWeight: "600" },
   cardBody: {
-    fontSize: Typography.sm,
+    fontSize: Typography.base,
     color: Colors.textMuted,
     marginTop: Spacing.xs,
   },
   cardTime: {
-    fontSize: Typography.xs,
+    fontSize: Typography.sm,
     color: Colors.textMuted,
     marginTop: Spacing.sm,
   },
   dot: {
-    width: 8,
-    height: 8,
-    borderRadius: Radius.xs,
-    backgroundColor: Colors.info,
+    width: 10,
+    height: 10,
+    borderRadius: 5,
+    backgroundColor: Colors.reserved,
     marginLeft: Spacing.sm,
+    marginTop: 4,
   },
   skeletonCard: { opacity: 0.6 },
   skeletonLine: {

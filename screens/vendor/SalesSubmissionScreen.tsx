@@ -3,6 +3,7 @@ import { KeyboardScreen } from "@/components/KeyboardScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
 import { goBackSafely } from "@/lib/navigation";
+import { COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
 import { pickAndUploadImage } from "@/lib/upload";
@@ -291,7 +292,11 @@ export default function SalesSubmissionScreen() {
       )}
       {isEditing && !lockedUntilPassed && (
         <View style={styles.editingNoteRow}>
-          <Ionicons name="information-circle" size={14} color={Colors.info} />
+          <Ionicons
+            name="information-circle"
+            size={14}
+            color={Colors.warningText}
+          />
           <Text style={styles.editingNote}>
             You’ve already submitted for this booking — editing will update it.
           </Text>
@@ -402,13 +407,14 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.xl,
   },
   title: {
-    fontSize: Typography.xl,
-    fontWeight: "bold",
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
     color: Colors.text,
     marginBottom: Spacing.xs,
   },
   subtitle: {
-    fontSize: Typography.sm,
+    fontSize: Typography.base,
     color: Colors.textMuted,
     marginBottom: Spacing.sm,
   },
@@ -418,17 +424,23 @@ const styles = StyleSheet.create({
     gap: Spacing.xs,
     marginBottom: Spacing.lg,
   },
-  editingNote: { fontSize: Typography.sm, color: Colors.info, flex: 1 },
-  label: {
+  editingNote: {
     fontSize: Typography.sm,
+    color: Colors.warningText,
+    flex: 1,
+  },
+  label: {
+    fontSize: Typography.base,
+    fontWeight: "600",
     color: Colors.textMuted,
     marginBottom: Spacing.sm,
   },
   uploadBox: {
     borderWidth: 1,
-    borderColor: Colors.textMuted,
+    borderColor: COLORS.border,
     borderStyle: "dashed",
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
+    backgroundColor: Colors.white,
     padding: Spacing.xxl,
     alignItems: "center",
     marginBottom: Spacing.xl,
@@ -444,7 +456,7 @@ const styles = StyleSheet.create({
   },
   lockedNote: { fontSize: Typography.sm, color: Colors.warningText, flex: 1 },
   uploadedText: {
-    color: Colors.info,
+    color: Colors.availableText,
     fontSize: Typography.sm,
     fontWeight: "600",
   },
@@ -455,7 +467,7 @@ const styles = StyleSheet.create({
   },
   skeletonInput: {
     height: 44,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     backgroundColor: Colors.borderLight,
     marginBottom: Spacing.md,
   },

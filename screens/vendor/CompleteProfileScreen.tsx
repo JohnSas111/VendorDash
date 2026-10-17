@@ -4,6 +4,7 @@ import { KeyboardScreen } from "@/components/KeyboardScreen";
 import { PrimaryButton } from "@/components/PrimaryButton";
 import { Colors, Radius, Spacing, Typography } from "@/constants/theme";
 import { goBackSafely } from "@/lib/navigation";
+import { COLORS, RADIUS, SERIF } from "@/lib/organizerTheme";
 import { useSignedImageUrl } from "@/lib/storage";
 import { supabase } from "@/lib/supabase";
 import { useToast } from "@/lib/toast";
@@ -255,23 +256,25 @@ const styles = StyleSheet.create({
     paddingTop: Spacing.xl,
   },
   title: {
-    fontSize: Typography.xl,
-    fontWeight: "bold",
+    fontFamily: SERIF,
+    fontSize: 30,
+    fontWeight: "400",
     color: Colors.text,
     textAlign: "center",
     marginBottom: Spacing.xs,
   },
   subtitle: {
-    fontSize: Typography.sm,
+    fontSize: Typography.base,
     color: Colors.textMuted,
     textAlign: "center",
     marginBottom: Spacing.xxl,
   },
   uploadBox: {
     borderWidth: 1,
-    borderColor: Colors.textMuted,
+    borderColor: COLORS.border,
     borderStyle: "dashed",
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
+    backgroundColor: Colors.white,
     padding: Spacing.xxl,
     alignItems: "center",
     marginBottom: Spacing.xl,
@@ -282,11 +285,11 @@ const styles = StyleSheet.create({
   thumbnail: {
     width: 80,
     height: 80,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     marginBottom: Spacing.sm,
   },
   uploadedText: {
-    color: Colors.info,
+    color: Colors.availableText,
     fontSize: Typography.sm,
     fontWeight: "600",
   },
@@ -297,7 +300,7 @@ const styles = StyleSheet.create({
   },
   skeletonInput: {
     height: 44,
-    borderRadius: Radius.sm,
+    borderRadius: RADIUS.sm,
     backgroundColor: Colors.borderLight,
     marginBottom: Spacing.md,
   },
